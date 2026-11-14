@@ -1,5 +1,6 @@
 import Resdet
 import Tests
+import ContractsTests
 import Lean
 
 /-!
@@ -13,28 +14,24 @@ run_cmd do
   -- Every Resdet declaration is audited below, not just this list.
   let required := #[
     `Resdet.dedupFrom_append, `Resdet.dedupFrom_nodup,
-    `Resdet.dedupFrom_fresh, `Resdet.dedupFrom_covers,
     `Resdet.deliver_consistent, `Resdet.deliver_append,
-    `Resdet.deliver_nodup, `Resdet.deliver_covers,
-    `Resdet.reachable_invariant, `Resdet.Protocol.reachable_refines,
-    `Resdet.Protocol.all_safety,
-    `Resdet.Paper.theorem_1_safety, `Resdet.Paper.theorem_2_liveness,
-    `Resdet.Paper.theorem_1_crash_stop, `Resdet.Paper.theorem_2_crash_stop,
-    `Resdet.Paper.first_committed_response, `Resdet.Paper.rebatching_preserves_delivery,
-    `Resdet.Tests.sample_reachable, `Resdet.Tests.skipped_prefix_unreachable,
-    `Resdet.Tests.early_delivery_unreachable,
-    `Resdet.Tests.dedup_respects_seen, `Resdet.Tests.delivery_dedup_across_batches,
-    `Resdet.Protocol.Tests.recovery_run,
-    `Resdet.Protocol.Tests.single_arrival_enables_dispatch,
-    `Resdet.Protocol.Tests.dispatch_before_receipt_unreachable,
-    `Resdet.Protocol.Tests.repeated_arrival_keeps_one_dispatch,
-    `Resdet.Protocol.Tests.pending_at_stabilization,
-    `Resdet.Protocol.Tests.stable_leader_attempts_pending_request,
-    `Resdet.Protocol.Tests.retry_contracts_satisfiable,
-    `Resdet.Protocol.Tests.fairness_is_necessary,
-    `Resdet.Paper.Tests.recovery_marker_counterexample,
-    `Resdet.Paper.CrashStopTests.failover_retry_run,
-    `Resdet.Paper.CrashStopTests.crash_stop_contracts_satisfiable]
+    `Resdet.Requests.step_preserves_invariant,
+    `Resdet.handle_learn_invariant, `Resdet.handle_learn_completed,
+    `Resdet.Execution.invariant, `Resdet.Execution.completed,
+    `Resdet.lemma_1_same_processed_entry, `Resdet.lemma_2_no_hole_processing,
+    `Resdet.theorem_1_safety, `Resdet.theorem_1_on_execution,
+    `Resdet.lemma_3_eventual_agreement, `Resdet.lemma_4_eventual_prefix_learning,
+    `Resdet.lemma_5_eventual_delivery, `Resdet.lemma_5_on_execution,
+    `Resdet.theorem_2_liveness, `Resdet.delivered_permanently_once,
+    `Resdet.Tests.out_of_order_waits, `Resdet.Tests.filling_gap_drains_prefix,
+    `Resdet.Tests.duplicate_callback_ignored, `Resdet.Tests.nonleader_forwards_payload,
+    `Resdet.Tests.duplicate_request_does_not_reexecute,
+    `Resdet.Tests.both_proposals_after_demotion,
+    `Resdet.Tests.later_leader_retries_suppressed,
+    `Resdet.ContractsTests.consensus_contract, `Resdet.ContractsTests.request_progress,
+    `Resdet.ContractsTests.leader_admission, `Resdet.ContractsTests.former_leader_progress,
+    `Resdet.ContractsTests.concrete_delivery, `Resdet.ContractsTests.safety_instance,
+    `Resdet.ContractsTests.liveness_instance]
   for name in required do
     let _ ← getConstInfo name
   let allowed := #[`propext, `Quot.sound, `Classical.choice]
@@ -49,7 +46,6 @@ run_cmd do
   if checked == 0 then throwError "No Resdet declarations were audited"
   logInfo m!"Axiom audit passed for {checked} Resdet declarations (including tests)."
 
-#print axioms Resdet.Paper.theorem_1_safety
-#print axioms Resdet.Paper.theorem_2_liveness
-#print axioms Resdet.Paper.theorem_1_crash_stop
-#print axioms Resdet.Paper.theorem_2_crash_stop
+#print axioms Resdet.theorem_1_on_execution
+#print axioms Resdet.theorem_2_liveness
+#print axioms Resdet.ContractsTests.liveness_instance

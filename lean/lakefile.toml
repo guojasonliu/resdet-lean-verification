@@ -1,6 +1,6 @@
 name = "resdet"
 version = "0.1.0"
-defaultTargets = ["Resdet", "Tests"]
+defaultTargets = ["Resdet", "Tests", "ContractsTests"]
 
 [leanOptions]
 warningAsError = true
@@ -12,10 +12,4 @@ name = "Resdet"
 name = "Tests"
 
 [[lean_lib]]
-name = "ProtocolTests"
-
-[[lean_lib]]
-name = "PaperTests"
-
-[[lean_lib]]
-name = "CrashStopTests"
+name = "ContractsTests"

@@ -1,114 +1,107 @@
-# Model and proof contracts
+# Execution and proof contracts
 
-## State and transitions
+## Handler execution
 
-`Protocol.State` contains a delivery core and protocol histories:
+[Protocol.lean](Resdet/Protocol.lean) contains the request and local-delivery
+handlers. [Execution.lean](Resdet/Execution.lean) connects them to executions:
 
-| Field | Meaning |
+| Component | Meaning |
 | --- | --- |
-| `core.log` | Shared append-only log of response batches. |
-| `core.replica` | Per-replica learned slots and processed prefix length. |
-| `core.replica[r].seen`, `core.replica[r].delivered` | Shared delivery state: IDs already delivered and their response history. |
-| `leader`, `up` | Current leader and replica availability. |
-| `requests` | Global history of nested invocations `(rid, payload)` made available to Resdet. |
-| `dispatches`, `executions` | Sender/request/leader snapshots and sender/request/response histories. |
-| `observed`, `proposed` | Returned responses and proposed response entries. |
+| `Replica.requests` | Issued calls with payloads, forwarded requests, and submitted proposals. |
+| `Replica.delivery` | Local learned entry map, learned/processed indices, seen delivery IDs, and response history. |
+| `Execution.state` | The state of each replica at each natural-number time. |
+| `Execution.leader` | The external leadership observation at each time and replica. |
+| `Execution.event` | A request-handler segment, response continuation, learning callback, or idle step. |
+| `Execution.next` | Each event executes the corresponding handler definition. |
 
-`Step` allows request arrival, leader-only dispatch, response, proposal or
-reproposal, consensus append, learning, processing, crash, recovery, election,
-and stuttering. A received request can be dispatched by the live leader if
-that leader has not dispatched its ID before. With crashes disabled, a fixed
-leader and this local freshness check imply globally unique dispatch.
+`handle_request` checks leadership once. A nonleader records a forwarding
+effect with the same ID and payload. A fresh leader request records an issued
+RPC; an already-issued ID is suppressed. `resume_request` represents the
+continuation after a response returns, and proposes without another leadership
+check. Its transition requires an earlier issued call and no previous
+completion for that ID at this replica.
 
-`receive` is an environment action recording an invocation, not execution of
-a particular replica's handler. It has no node or availability guard; arrivals
-can be recorded while replicas are down. The history survives leader changes,
-so forwarding and delivery of retries to a particular new leader are abstracted
-away. Repeated arrivals with the same ID are allowed.
+`handle_learn` records the supplied entry in that replica's local map. It
+ignores an existing index and otherwise calls `process`, which drains the
+available contiguous prefix. There is no independent processing action or
+additional processing-fairness premise. The processing loop updates `seen`
+and `delivered` using the shared `deliver` operation.
 
-Request bodies are recorded at arrival but are not carried through downstream
-execution. Responses may be arbitrary. Crash/recovery retains all histories
-and delivery-deduplication state; it is not a volatile-state restart model.
-See the [paper correspondence](PAPER.md#recovery-remains-a-model-gap).
+Events complete nonblocking local segments; RPC waiting lies between request
+and resume events. The model does not interleave memory operations within a
+segment. Forwarding is a visible effect, but the transport implementation,
+retransmission schedule, and leader election algorithm are outside the model.
+Leadership may change; no permanent stable-leader premise is used.
 
-## Safety proof
+## Safety
 
-1. `dedupFrom` in `Dedup.lean` proves unique fresh IDs, provenance, coverage,
-   and composition across batches. The single `deliver` handler updates
-   `DeliveryState.seen` and `DeliveryState.delivered` together.
-2. The core invariant proves that `seen` equals the delivered request IDs and
-   each delivered sequence is the deduplicated processed log prefix. This
-   yields agreement, prefix agreement, and at-most-once delivery.
-3. The protocol calls the core's `processBatch` directly. `step_refines` and
-   `reachable_refines` project protocol executions to core executions, allowing
-   core stuttering for protocol-only actions; no processing-equivalence proof
-   is needed.
-4. `Protocol.all_safety` combines those results with request, dispatch, and
-   response provenance: delivered items have a received invocation, a physical
-   execution, a proposal, and an agreed log entry.
-
-Safety holds for arbitrary finite reachable executions, including reordered
-learning, conflicting responses, and repeated agreement of the same ID. It
-needs no fairness. Unique physical dispatch requires crashes to be disabled;
-workflow delivery remains at most once even with failures.
-
-## Liveness proof
-
-A `Behavior` starts at the initial state and takes a `Step` at every natural
-time. `WeakFair enabled occurs` means an action that remains enabled from any
-time onward eventually occurs. The principal interface is
-`Paper.PendingHandlers` plus `Protocol.StableConsensusProgress`:
-
-| Assumption | Required progress |
-| --- | --- |
-| `StableLeader` | After a finite time, one node stays live and remains leader. |
-| Ingress / `Received` | Each submitted request eventually appears in the global received-request history. |
-| `PendingHandlers` | Per-request weak fairness of dispatch, response, and proposal attempts while the request is unagreed. Response progress includes the downstream-service contract. |
-| `StableConsensusProgress` | Actual proposal attempts by the stable leader eventually appear in the log. |
-| `DeliveryProgress` | Each agreed slot is eventually learned, and enabled next-slot processing is weakly fair. |
-
-The proof chain is:
+`LocalInvariant` and handler completion facts are proved from the initial
+state and handler definitions. In particular:
 
 ```text
-eventually_executed                received request -> dispatch -> response
-eventually_agreed_stable_consensus retry attempt -> consensus agreement
-eventually_processed              induction over a finite log prefix
-agreed_eventually_delivered       processed prefix -> a response for the ID
-Paper.theorem_2_liveness          ingress + stabilization -> permanent delivery
-Paper.theorem_2_crash_stop        specialize to non-faulty crash-stop replicas
+history.length = processed
+history[k] = log[k + 1] for each processed position k
+seen = ids(delivered)
+delivered = dedup(history)
 ```
 
-`Paper.eventually_agreed` only requires handler fairness while the request is
-pending: either it is already agreed, or those pending-handler premises yield
-the stage progress above. No premise directly assumes eventual workflow
-delivery. Per-request fairness is stronger than aggregate-action fairness that
-could indefinitely starve one request among infinitely many.
+`history` is proof instrumentation. The handlers never consult it when
+checking a guard or selecting a response.
 
-`Step.repropose` represents an actual attempt even when the response is already
-buffered. Consensus progress applies to the stable leader's attempts, not
-automatically to an old leader's uncommitted buffer contents.
-`retry_enabled_has_step` checks that an enabled attempt has a transition.
+`IndexAgreement` states CG1 for two independently learned local logs and may
+compare different times. Lemma 1 combines CG1 with the processing invariant.
+Lemma 2 establishes the complete processed prefix. Theorem 1 compares the two
+prefixes and uses request-ID deduplication to establish equal responses. Local
+at-most-once delivery follows from the same invariant without a progress
+assumption. `theorem_1_on_execution` derives local invariants from the run
+and requires only `CallbackAgreement`, without any liveness premises.
 
-The supplementary `LocalProgress` / `ConsensusProgress` interface and
-`eventual_delivery` theorem require every buffered proposal to reach agreement.
-That stronger contract is not used by the main paper-facing theorem.
-`RetryProgress` is an intermediate form with handler fairness even after
-agreement; `PendingHandlers` avoids that unnecessary requirement.
+## Environment and liveness
 
-## TLA+ correspondence and tests
+[Assumptions.lean](Resdet/Assumptions.lean) describes an external agreed-entry
+relation, nonfaulty replicas, and the following contracts. They are theorem
+parameters rather than added Lean axioms.
 
-The correspondence is manual. `DecideOne`/`DecidePair`, `LearnSlot`, and
-`ProcessContiguous` correspond to core append, learn, and process actions.
-Lean uses zero-based slots and arbitrary finite batches (including empty ones),
-with singleton batches representing basic Resdet entries. It has
-no `MaxSlots` bound, and no unique-first scheduling restriction. It permits
-repeated learning and explicit reproposal attempts. These differences are
-not covered by a machine-checked translation.
+| Contract | What it supplies |
+| --- | --- |
+| `Consensus.indexAgreement` (CG1 interpretation) | Cross-time agreement of callback entries at the same positive index, including duplicate callbacks the handler ignores. |
+| `Consensus.prefixAgreement` (CG2) | An agreed index has an agreed entry at every earlier positive index. |
+| `Consensus.currentLeaderProgress` (CG3(2)) | A response continuation that proposes at a nonfaulty current leader eventually has its entry agreed. |
+| `Consensus.learnCallbacks` (CG3(3) + L4) | An agreed entry is already recorded or eventually has a matching concrete `handle_learn` event at each nonfaulty replica. The event executes the callback, including prefix processing. |
+| `RequestProgress.resume` (L3 + L4) | An issued, incomplete call at a nonfaulty replica eventually has a concrete `resume_request` event. That event executes the continuation and emits a proposal. |
+| **Extra: `LeaderAdmission`** | A submitted request that stays unagreed eventually has a concrete request-handler event at a nonfaulty current leader. |
+| **Extra: `FormerLeaderProposalProgress`** | A nonfaulty handler's proposal still eventually becomes agreed if its replica has lost leadership before the response continuation. |
 
-Regression traces exercise single and repeated request arrivals, rejection of
-dispatch before receipt, reordered learning, duplicate/conflicting responses,
-failover, and repeated physical execution.
-`fairness_is_necessary` exhibits a legal execution that learns an entry and
-then stalls forever. Contract-satisfiability witnesses check that the liveness
-premises can hold together; they do not establish runtime fairness. Run
-`make check-lean` for all proofs, examples, and the transitive axiom audit.
+CG3(1), L1, and L2 are not separately implemented or proved. The extra leader
+admission contract supplies the routing/scheduling overlap missing from their
+printed statements. Combined L3/L4 and callback/L4 contracts refer to actual
+handler events, not assumed eventual proposal or delivery histories. Learning
+progress allows an entry already recorded, so it does not demand an infinite
+stream of duplicate callbacks for an old agreement. The completed-segment
+interpretation is explicit; arrival queues and scheduler
+internals are not modeled.
+
+The liveness chain is:
+
+```text
+Lemma 3: leader admission -> issued call -> response continuation -> agreement
+Lemma 4: agreed index -> agreed finite prefix -> executed learning callbacks
+Lemma 5: learned prefix -> completed processing loop -> delivered response
+Theorem 2: compose Lemmas 3, 4, and 5
+```
+
+A callback may find the requested ID already delivered from an earlier index;
+Lemma 5 therefore promises a response for the ID, not necessarily the response
+at the particular agreed index used in its premise. Theorem 1 supplies response
+agreement. The formal liveness proof also uses CG1 when a repeated callback
+finds an existing local entry: the old entry must equal the agreed callback
+value. The paper's Theorem 2 premise list currently omits this dependency.
+Delivery history grows, so an established delivery is not retracted.
+
+See [PAPER.md](PAPER.md#assumptions-that-need-author-review) for the leadership
+counterexample, recovery limits, body-identity contract, and serialized-handler
+assumption. The checks prove the definitions and conditional statements in this
+repository; they do not establish those external contracts in an implementation.
+[ContractsTests.lean](ContractsTests.lean) supplies a complete execution satisfying
+the contracts, while [Tests.lean](Tests.lean) checks the handler examples and the
+finite demotion scenario.

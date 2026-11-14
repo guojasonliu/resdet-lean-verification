@@ -1,52 +1,48 @@
 # Resdet Lean verification
 
-Machine-checked response agreement, duplicate suppression, and conditional
-workflow-delivery liveness for an abstract Resdet protocol model. The proofs
-are parameterized by replica, request, payload, and response types; there is
-no fixed bound on replicas, requests, batches, or execution length.
+A Lean formalization of Resdet's paper pseudocode and its five lemmas and two
+main theorems. Replicas keep independent learned logs; consensus is an explicit
+contract rather than a shared log built into the protocol state.
 
-## Run
+The code follows `handle_request`, its continuation after the downstream RPC,
+`handle_learn`, and `process`. The proofs have no fixed bound on replicas,
+request IDs, responses, or execution length.
 
-The project uses Lean 4.24.0 and its bundled standard library, with no external
-Lean packages. From this repository's root:
+**Liveness is conditional on two explicitly flagged additions to the paper:**
+a pending request reaches a nonfaulty leader's executing handler, and proposals
+from a handler that has lost leadership still make consensus progress. The
+paper's current assumptions do not establish these properties. See
+[the assumption gaps](lean/PAPER.md#assumptions-that-need-author-review).
+
+## Check
+
+The project uses Lean 4.24.0 and its bundled standard library, without external
+Lean packages:
 
 ```sh
-make fetch-lean    # one-time project-local toolchain installation
-make check-lean    # compile proofs/tests and run the transitive axiom audit
+make fetch-lean    # one-time local toolchain installation
+make check-lean    # compile proofs/examples and audit their axiom dependencies
 ```
 
-To use an existing Lean 4.24.0 installation:
+An existing toolchain can be selected with
+`LEAN_BIN=/absolute/path/to/bin make check-lean`.
 
-```sh
-LEAN_BIN=/absolute/path/to/bin make check-lean
-```
-
-Warnings are errors. The audit permits only Lean's standard logical axioms
-(`propext`, `Quot.sound`, and `Classical.choice`); unfinished proofs, added
-axioms, and native-evaluation axioms fail the check. `lake build` alone does
-not run this audit.
+Warnings are errors. The audit permits only `propext`, `Quot.sound`, and
+`Classical.choice`; unfinished proofs and extra axioms are rejected.
+`lake build` alone does not run that audit.
 
 ## Review
 
-Start with the [reading guide](lean/README.md), then:
+Start with [Protocol.lean](lean/Resdet/Protocol.lean), then
+[Assumptions.lean](lean/Resdet/Assumptions.lean),
+[Safety.lean](lean/Resdet/Safety.lean), and
+[Liveness.lean](lean/Resdet/Liveness.lean).
 
-- [Dedup.lean](lean/Resdet/Dedup.lean): shared duplicate suppression and its guarantees.
-- [Delivery.lean](lean/Resdet/Delivery.lean): shared delivery state and handler.
-- [ResdetProtocol.lean](lean/Resdet/ResdetProtocol.lean): state and allowed Resdet actions.
-- [DeliveryModel.lean](lean/Resdet/DeliveryModel.lean): delivery core and its inductive invariant.
-- [Paper.lean](lean/Resdet/Paper.lean): theorem statements and liveness assumptions.
-- [Proof contracts](lean/PROTOCOL.md) and [paper correspondence](lean/PAPER.md).
+The [reading guide](lean/README.md) explains the supporting files.
+[Paper correspondence](lean/PAPER.md) maps the numbered statements and records
+scope differences; [proof contracts](lean/PROTOCOL.md) describes the execution
+and environment interfaces.
 
-## Scope
-
-Consensus is an abstract append-only log. A received request can proceed directly to leader dispatch.
-Liveness assumes ingress,
-handler/downstream progress, eventual stable leadership, consensus progress,
-and learning/processing progress. The main failure-model interface is
-crash-stop. The optional recovery action retains all state; it does not verify
-the paper's volatile-state recovery behavior. There is no checked refinement
-of the Go implementation or TLA+ specification, and no guarantee of exactly-once
-external side effects.
-
-This repository contains the Lean portion of the Resdet verification work,
-including its regression examples and axiom audit.
+The formalization does not prove consensus, transport, restart/recovery,
+request-ID generation, or the Go implementation correct. Its exactly-once
+property concerns delivery to service code, not external side effects.

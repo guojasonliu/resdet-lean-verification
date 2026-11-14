@@ -1,86 +1,78 @@
-import Resdet.DeliveryModel
+import Resdet.HandlerProofs
 
 namespace Resdet
 
-variable {Node Request Response : Type} [DecidableEq Node] [DecidableEq Request]
+variable {Request Response : Type} [DecidableEq Request]
 
-omit [DecidableEq Node] [DecidableEq Request] in
-theorem flatten_prefix {xs ys : List (List (Item Request Response))}
-    (h : xs <+: ys) : xs.flatten <+: ys.flatten := by
-  obtain ⟨suffix, rfl⟩ := h
-  rw [List.flatten_append]
-  exact List.prefix_append _ _
+/-- CG1 for independently recorded local logs; it may compare different times. -/
+def IndexAgreement (left right : LocalState Request Response) : Prop :=
+  ∀ index a b, 1 ≤ index → left.log index = some a → right.log index = some b → a = b
 
-/-- Each independent replica history is a prefix of one canonical history. -/
-theorem delivered_prefix {s : State Node Request Response} (h : Reachable s) (r : Node) :
-    (s.replica r).delivered <+: dedup s.log.flatten := by
-  rw [(reachable_invariant h).appliedPrefixCorrect r]
-  exact dedup_prefix (flatten_prefix (List.take_prefix _ _))
+/-- Lemma 1: the same processed index contains the same entry, by CG1. -/
+theorem lemma_1_same_processed_entry {left right : LocalState Request Response}
+    (hl : LocalInvariant left) (hr : LocalInvariant right)
+    (cg1 : IndexAgreement left right) {index : Nat} (positive : 1 ≤ index)
+    {a b : Item Request Response}
+    (pl : left.history[index - 1]? = some a)
+    (pr : right.history[index - 1]? = some b) : a = b := by
+  have il : index - 1 < left.processed := by
+    rw [← hl.historyLength]
+    exact (List.getElem?_eq_some_iff.mp pl).1
+  have ir : index - 1 < right.processed := by
+    rw [← hr.historyLength]
+    exact (List.getElem?_eq_some_iff.mp pr).1
+  have llog : left.log index = some a := by
+    simpa only [Nat.sub_add_cancel positive] using (hl.historyLog (index - 1) il).symm.trans pl
+  have rlog : right.log index = some b := by
+    simpa only [Nat.sub_add_cancel positive] using (hr.historyLog (index - 1) ir).symm.trans pr
+  exact cg1 index a b positive llog rlog
 
-/-- At-most-once workflow delivery, even if the log repeats or conflicts on IDs. -/
-theorem at_most_once_delivery {s : State Node Request Response}
-    (h : Reachable s) (r : Node) : ((s.replica r).delivered.map Prod.fst).Nodup := by
-  rw [(reachable_invariant h).appliedPrefixCorrect r]
+/-- Lemma 2: processing index i includes every positive index through i. -/
+theorem lemma_2_no_hole_processing {s : LocalState Request Response}
+    (h : LocalInvariant s) (index : Nat) (processed : index ≤ s.processed) :
+    ∀ earlier, 1 ≤ earlier → earlier ≤ index →
+      ∃ entry, s.history[earlier - 1]? = some entry ∧ s.log earlier = some entry := by
+  intro earlier positive before
+  have inside : earlier - 1 < s.history.length := by rw [h.historyLength]; omega
+  refine ⟨s.history[earlier - 1], List.getElem?_eq_getElem inside, ?_⟩
+  simpa only [Nat.sub_add_cancel positive] using
+    (h.historyLog (earlier - 1) (by omega)).symm.trans (List.getElem?_eq_getElem inside)
+
+/-- Lemmas 1 and 2 give the same ordered entries up to the shorter processed prefix. -/
+theorem processed_history_prefix {left right : LocalState Request Response}
+    (hl : LocalInvariant left) (hr : LocalInvariant right)
+    (cg1 : IndexAgreement left right) (order : left.processed ≤ right.processed) :
+    left.history <+: right.history := by
+  apply List.prefix_iff_getElem?.mpr
+  intro k inside
+  have bound : k < left.processed := by rwa [hl.historyLength] at inside
+  obtain ⟨a, lentry, _⟩ := lemma_2_no_hole_processing hl left.processed (Nat.le_refl _)
+    (k + 1) (by omega) (by omega)
+  obtain ⟨b, rentry, _⟩ := lemma_2_no_hole_processing hr left.processed order
+    (k + 1) (by omega) (by omega)
+  have same := lemma_1_same_processed_entry hl hr cg1 (by omega : 1 ≤ k + 1) lentry rentry
+  simp only [Nat.add_sub_cancel] at lentry rentry
+  have eq : a = left.history[k] :=
+    Option.some.inj (lentry.symm.trans (List.getElem?_eq_getElem inside))
+  simpa [← same, eq] using rentry
+
+/-- Theorem 1: any two deliveries of one request ID have the same response. -/
+theorem theorem_1_safety {left right : LocalState Request Response}
+    (hl : LocalInvariant left) (hr : LocalInvariant right)
+    (cg1 : IndexAgreement left right) {request : Request} {a b : Response}
+    (ha : (request, a) ∈ left.delivered) (hb : (request, b) ∈ right.delivered) : a = b := by
+  rw [hl.delivery] at ha
+  rw [hr.delivery] at hb
+  rcases Nat.le_total left.processed right.processed with order | order
+  · have pre := dedup_prefix (processed_history_prefix hl hr cg1 order)
+    exact congrArg Prod.snd (eq_of_same_id (dedup_nodup right.history) (pre.subset ha) hb rfl)
+  · have reverse : IndexAgreement right left := fun i x y hi hx hy => (cg1 i y x hi hy hx).symm
+    have pre := dedup_prefix (processed_history_prefix hr hl reverse order)
+    exact congrArg Prod.snd (eq_of_same_id (dedup_nodup left.history) ha (pre.subset hb) rfl)
+
+theorem at_most_once_delivery {s : LocalState Request Response} (h : LocalInvariant s) :
+    (s.delivered.map Prod.fst).Nodup := by
+  rw [h.delivery]
   exact dedup_nodup _
-
-theorem delivery_count_le_one {s : State Node Request Response}
-    (h : Reachable s) (r : Node) (request : Request) :
-    ((s.replica r).delivered.map Prod.fst).count request ≤ 1 := by
-  exact List.nodup_iff_count.mp (at_most_once_delivery h r) request
-
-/-- Agreement is conditional on both replicas having delivered the request;
-it does not assert eventual delivery. -/
-theorem response_agreement {s : State Node Request Response} (h : Reachable s)
-    (left right : Node) {request : Request} {a b : Response}
-    (ha : (request, a) ∈ (s.replica left).delivered)
-    (hb : (request, b) ∈ (s.replica right).delivered) : a = b := by
-  have same := eq_of_same_id (dedup_nodup s.log.flatten)
-    ((delivered_prefix h left).subset ha) ((delivered_prefix h right).subset hb) rfl
-  exact congrArg Prod.snd same
-
-theorem prefix_agreement {s : State Node Request Response} (h : Reachable s)
-    (left right : Node) :
-    (s.replica left).delivered <+: (s.replica right).delivered ∨
-    (s.replica right).delivered <+: (s.replica left).delivered := by
-  exact List.prefix_or_prefix_of_prefix (delivered_prefix h left) (delivered_prefix h right)
-
-omit [DecidableEq Node] [DecidableEq Request] in
-theorem heads_eq_of_prefix {xs ys : List (Item Request Response)} {a b : Item Request Response}
-    (h : xs <+: ys) (hx : xs.head? = some a) (hy : ys.head? = some b) : a = b := by
-  obtain ⟨suffix, rfl⟩ := h
-  cases xs with
-  | nil => simp at hx
-  | cons first rest =>
-      simp only [List.cons_append, List.head?_cons, Option.some.injEq] at hx hy
-      exact hx.symm.trans hy
-
-/-- Agreement on the first response race, when both histories are nonempty. -/
-theorem race_winner_agreement {s : State Node Request Response} (h : Reachable s)
-    (left right : Node) {a b : Item Request Response}
-    (ha : (s.replica left).delivered.head? = some a)
-    (hb : (s.replica right).delivered.head? = some b) : a.1 = b.1 := by
-  rcases prefix_agreement h left right with hp | hp
-  · exact congrArg Prod.fst (heads_eq_of_prefix hp ha hb)
-  · exact congrArg Prod.fst (heads_eq_of_prefix hp hb ha).symm
-
-/-- Validity relative to the consensus log, not to physical execution. -/
-theorem delivered_in_log {s : State Node Request Response} (h : Reachable s)
-    (r : Node) {item : Item Request Response} (hi : item ∈ (s.replica r).delivered) :
-    item ∈ s.log.flatten := by
-  exact dedup_mem ((delivered_prefix h r).subset hi)
-
-/-- No transition can retract or replace an already delivered response. -/
-theorem step_delivery_monotone {s t : State Node Request Response} (h : Step s t)
-    (r : Node) : (s.replica r).delivered <+: (t.replica r).delivered := by
-  cases h with
-  | append => exact List.prefix_refl _
-  | stutter => exact List.prefix_refl _
-  | learn node slot _ =>
-      by_cases hn : r = node <;> simp [learnSlot, hn]
-  | process node batch _ _ =>
-      by_cases hn : r = node
-      · simpa [processBatch, hn] using
-          delivered_prefix_deliver batch (s.replica node).toDeliveryState
-      · simp [processBatch, hn]
 
 end Resdet

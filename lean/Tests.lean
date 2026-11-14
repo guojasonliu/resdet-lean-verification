@@ -1,104 +1,99 @@
-import Resdet
-import ProtocolTests
-import PaperTests
-import CrashStopTests
+import Resdet.Safety
+import Resdet.RequestProofs
 
-/-! Small kernel-checked examples, including a reachable nontrivial execution.
-These are regression checks, not substitutes for the parameterized theorems. -/
+/-!
+Kernel-checked examples of the paper's handlers. These complement the general
+proofs. The demotion example checks a finite request-handler execution; it does
+not claim to establish the paper's complete infinite liveness assumptions.
+-/
 namespace Resdet.Tests
 
-abbrev ExampleState := State Bool Nat Nat
+abbrev Replica := LocalState Nat Nat
 
-def batch0 : List (Item Nat Nat) := [(1, 7), (1, 9), (2, 8)]
-def batch1 : List (Item Nat Nat) := [(2, 99), (3, 10)]
-def s0 : ExampleState := initial
-def s1 := appendBatch s0 batch0
-def s2 := appendBatch s1 batch1
--- false learns slot 1 before slot 0, and must wait before processing.
-def s3 := learnSlot s2 false 1
-def s4 := learnSlot s3 false 0
-def s5 := processBatch s4 false batch0
-def s6 := processBatch s5 false batch1
--- true catches up only as far as the first batch.
-def s7 := learnSlot s6 true 0
-def s8 := processBatch s7 true batch0
+def emptyReplica : Replica := initialLocal
+def learnedSecond := handle_learn emptyReplica 2 (1, 99)
+def learnedThird := handle_learn learnedSecond 3 (2, 20)
+def filledGap := handle_learn learnedThird 1 (1, 10)
 
-theorem sample_reachable : Reachable s8 := by
-  have h1 : Reachable s1 := .step .init (.append s0 batch0)
-  have h2 : Reachable s2 := .step h1 (.append s1 batch1)
-  have h3 : Reachable s3 := .step h2 (.learn s2 false 1 (by decide))
-  have h4 : Reachable s4 := .step h3 (.learn s3 false 0 (by decide))
-  have h5 : Reachable s5 := .step h4 (.process s4 false batch0 (by decide) (by decide))
-  have h6 : Reachable s6 := .step h5 (.process s5 false batch1 (by decide) (by decide))
-  have h7 : Reachable s7 := .step h6 (.learn s6 true 0 (by decide))
-  exact .step h7 (.process s7 true batch0 (by decide) (by decide))
+theorem out_of_order_waits :
+    learnedThird.learned = 3 ∧ learnedThird.processed = 0 ∧
+      learnedThird.log 2 = some (1, 99) ∧ learnedThird.delivered = [] := by decide
 
-theorem next_slot_not_yet_learned : (s3.replica false).processed ∉
-    (s3.replica false).learned := by decide
+theorem filling_gap_drains_prefix :
+    filledGap.processed = 3 ∧ filledGap.history = [(1, 10), (1, 99), (2, 20)] ∧
+      filledGap.seen = [1, 2] ∧ filledGap.delivered = [(1, 10), (2, 20)] := by decide
 
-theorem learned_out_of_order_but_not_delivered : (s3.replica false).delivered = [] := by decide
+/-- Even a conflicting duplicate callback cannot replace the first local entry. -/
+theorem duplicate_callback_ignored : handle_learn filledGap 1 (1, 777) = filledGap := rfl
 
-theorem full_delivery : (s8.replica false).delivered = [(1, 7), (2, 8), (3, 10)] := by decide
+theorem local_handler_invariant : LocalInvariant filledGap :=
+  handle_learn_invariant
+    (handle_learn_invariant (handle_learn_invariant initialLocal_invariant 2 (1, 99))
+      3 (2, 20)) 1 (1, 10)
 
-theorem lagging_delivery : (s8.replica true).delivered = [(1, 7), (2, 8)] := by decide
+theorem delivery_ids_unique : (filledGap.delivered.map Prod.fst).Nodup :=
+  at_most_once_delivery local_handler_invariant
 
-theorem example_agreement {request x y : Nat}
-    (hx : (request, x) ∈ (s8.replica false).delivered)
-    (hy : (request, y) ∈ (s8.replica true).delivered) : x = y :=
-  response_agreement sample_reachable false true hx hy
+def inOrder := handle_learn (handle_learn (handle_learn emptyReplica 1 (1, 10))
+  2 (1, 99)) 3 (2, 20)
 
--- Boundary cases: empty batches, duplicate slots, and conflicting responses.
-theorem empty_batch :
-    deliver [] { seen := [1], delivered := [(1, 7)] } =
-      ({ seen := [1], delivered := [(1, 7)] } : DeliveryState Nat Nat) := by decide
+theorem callback_order_does_not_change_delivery :
+    inOrder.delivered = filledGap.delivered := by decide
 
-theorem duplicate_slot :
-    deliver batch0 (deliver batch0 {}) =
-      { seen := [1, 2], delivered := [(1, 7), (2, 8)] } := by decide
-
-theorem conflicting_response : dedup [(1, 7), (1, 999)] = [(1, 7)] := by decide
-
-/-- Previously delivered IDs are suppressed; a new ID keeps its first response. -/
 theorem dedup_respects_seen :
     dedupFrom [2] [(2, 99), (1, 7), (1, 9), (3, 10), (2, 100)] =
       [(1, 7), (3, 10)] := by decide
 
-/-- Both old and earlier-batch responses survive conflicting later duplicates. -/
-theorem delivery_dedup_across_batches :
-    let first := deliver batch0 { seen := [1], delivered := [(1, 5)] }
-    deliver batch1 first =
-      { seen := [1, 2, 3], delivered := [(1, 5), (2, 8), (3, 10)] } := by decide
+abbrev RequestState := Requests.State Nat Nat Nat
 
--- Counterexamples to weakened handlers, deliberately NOT constructors of Step.
-def noDedupOutput : List (Item Nat Nat) := [] ++ [(1, 7), (1, 9)]
+def forwarded : RequestState := Requests.handle_request false 1 42 {}
 
-theorem no_dedup_breaks_at_most_once :
-    ¬ (noDedupOutput.map Prod.fst).Nodup := by decide
+theorem nonleader_forwards_payload :
+    forwarded.forwarded = [(1, 42)] ∧ forwarded.calls = [] ∧
+      forwarded.proposals = [] := by decide
 
-def conflictLog : List (List (Item Nat Nat)) := [[(1, 7)], [(1, 9)]]
+def accepted : RequestState := Requests.handle_request true 1 42 {}
 
-def skippedPrefix : ExampleState :=
-  { log := conflictLog
-    replica := fun r =>
-      if r then { processed := 2, learned := [0, 1], seen := [1], delivered := [(1, 9)] }
-      else { processed := 1, learned := [0, 1], seen := [1], delivered := [(1, 7)] } }
+theorem duplicate_request_does_not_reexecute :
+    Requests.handle_request true 1 42 accepted = accepted := by decide
 
-theorem skipping_prefix_breaks_agreement :
-    (1, 7) ∈ (skippedPrefix.replica false).delivered ∧
-    (1, 9) ∈ (skippedPrefix.replica true).delivered ∧ (7 : Nat) ≠ 9 := by decide
+/-- `false` names A and `true` names B; both replicas remain available. -/
+structure TwoNodes where
+  leader : Bool := false
+  a : RequestState := {}
+  b : RequestState := {}
 
-theorem skipped_prefix_unreachable : ¬ Reachable skippedPrefix := by
-  intro h
-  have bad : (7 : Nat) = 9 := response_agreement h false true (request := 1)
-    (by decide) (by decide)
-  exact (by decide : (7 : Nat) ≠ 9) bad
+def c0 : TwoNodes := {}
+def c1 : TwoNodes := { c0 with a := Requests.handle_request (!c0.leader) 1 42 c0.a }
+def c2 : TwoNodes := { c1 with leader := true }
+def c3 : TwoNodes := { c2 with a := Requests.resume_request 1 7 c2.a }
+def c4 : TwoNodes := { c3 with b := Requests.handle_request c3.leader 1 42 c3.b }
+def c5 : TwoNodes := { c4 with leader := false }
+def c6 : TwoNodes := { c5 with b := Requests.resume_request 1 9 c5.b }
 
-def earlyDelivery : ExampleState :=
-  { log := [], replica := fun _ => { seen := [1], delivered := [(1, 7)] } }
+theorem a_handler_steps : Requests.Step c0.a c1.a ∧ Requests.Step c2.a c3.a := by
+  constructor
+  · exact .handle c0.a (!c0.leader) 1 42
+  · exact .resume c2.a 1 7 (by change 1 ∈ ([1] : List Nat); decide)
+      (by change ¬ 1 ∈ ([] : List Nat); decide)
 
-theorem early_delivery_unreachable : ¬ Reachable earlyDelivery := by
-  intro h
-  have bad := delivered_in_log h false (item := (1, 7)) (by decide)
-  simp [earlyDelivery] at bad
+theorem b_handler_steps : Requests.Step c3.b c4.b ∧ Requests.Step c5.b c6.b := by
+  constructor
+  · exact .handle c3.b c3.leader 1 42
+  · exact .resume c5.b 1 9 (by change 1 ∈ ([1] : List Nat); decide)
+      (by change ¬ 1 ∈ ([] : List Nat); decide)
+
+/-- The code proposes after the RPC even when the accepting leader was demoted. -/
+theorem both_proposals_after_demotion :
+    c2.leader ≠ false ∧ c5.leader ≠ true ∧
+      c6.a.proposals = [(1, 7)] ∧ c6.b.proposals = [(1, 9)] := by decide
+
+/-- Neither replica retries its completed call when it next handles rid as leader.
+If consensus drops the follower proposals, request deduplication alone cannot
+produce another proposal. No consensus or infinite execution is asserted here. -/
+theorem later_leader_retries_suppressed :
+    Requests.handle_request true 1 42 c6.a = c6.a ∧
+      Requests.handle_request true 1 42 c6.b = c6.b ∧
+      c6.a.calls = [(1, 42)] ∧ c6.b.calls = [(1, 42)] := by decide
 
 end Resdet.Tests

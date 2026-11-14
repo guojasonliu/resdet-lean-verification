@@ -1,87 +1,47 @@
-# Resdet in Lean
+# Reading the Lean proof
 
-This project proves response agreement, duplicate suppression, and conditional
-delivery liveness for an abstract Resdet model. Consensus supplies a shared,
-append-only log; its implementation is not verified here. The proofs have no
-fixed bound on replicas, requests, batches, or execution length.
+Read the protocol definitions beside the paper's pseudocode, then the
+assumptions and numbered proofs. Each replica has its own learned `log`;
+consensus agreement is a premise used in the proofs, not a shared protocol
+array that forces replicas to agree by construction.
 
-**Scope:** the main failure-model interface is crash-stop: failed replicas stay
-down. The current paper also permits recovery. The optional `recover` action
-retains all protocol state, so it does not model a process restart that clears
-volatile request-deduplication state. These results do not establish recovery
-correctness of the current paper or implementation. See [PAPER.md](PAPER.md).
-
-## Check the proofs
-
-From the repository root:
-
-```sh
-make fetch-lean    # one-time local installation, if needed
-make check-lean    # build, regression examples, and axiom audit
-```
-
-The project uses **Lean 4.24.0** and its bundled standard library, with no
-external Lean packages. To use an existing toolchain:
-
-```sh
-LEAN_BIN=/absolute/path/to/lean-4.24.0/bin make check-lean
-```
-
-`lake build` alone omits the axiom audit. `make check-lean` treats warnings as
-errors and checks the transitive axioms of every `Resdet` declaration, including
-tests. Only `propext`, `Quot.sound`, and `Classical.choice` are allowed; unfinished
-proofs, user axioms, and native-evaluation axioms fail the check.
-
-## Reading order
-
-Start with the definitions and theorem statements, then read their proofs.
-
-| File | What to review |
+| File | Purpose |
 | --- | --- |
-| [Dedup.lean](Resdet/Dedup.lean) | Shared first-occurrence scan and its uniqueness, coverage, and batch-composition guarantees. |
-| [Delivery.lean](Resdet/Delivery.lean) | One delivery handler updates the stored delivered IDs and response history together. |
-| [DeliveryModel.lean](Resdet/DeliveryModel.lean) | Four core actions: append, learn, process, stutter. The invariant connects each stored delivery history to a deduplicated log prefix. |
-| [Safety.lean](Resdet/Safety.lean) | Agreement and at-most-once delivery follow from that invariant. |
-| [ResdetProtocol.lean](Resdet/ResdetProtocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Request arrival, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
-| [Temporal.lean](Resdet/Temporal.lean), [ProtocolLiveness.lean](Resdet/ProtocolLiveness.lean), [ProposalRetry.lean](Resdet/ProposalRetry.lean) | Handler progress, stable-leader proposal attempts, and prefix processing yield delivery. |
-| [Paper.lean](Resdet/Paper.lean), [CrashStop.lean](Resdet/CrashStop.lean) | Agreement across different times and eventual permanent delivery to non-faulty replicas. |
+| [Protocol.lean](Resdet/Protocol.lean) | Replica state and the paper's request, learning, and processing handlers. |
+| [Assumptions.lean](Resdet/Assumptions.lean) | Consensus and external progress contracts, with additions to the paper marked explicitly. |
+| [Safety.lean](Resdet/Safety.lean) | Lemmas 1–2 and Theorem 1: equal processed entries, no holes, and response agreement. |
+| [Liveness.lean](Resdet/Liveness.lean) | Lemmas 3–5 and Theorem 2: agreement, prefix learning, and delivery. |
+| [RequestProofs.lean](Resdet/RequestProofs.lean) | Request deduplication, legal response continuations, and proposal origins. |
+| [HandlerProofs.lean](Resdet/HandlerProofs.lean) | Induction over the actual processing loop and local callback invariants. |
+| [Execution.lean](Resdet/Execution.lean) | Runs of handler events and facts that persist along those runs. |
+| [Dedup.lean](Resdet/Dedup.lean), [Delivery.lean](Resdet/Delivery.lean) | One first-ID-wins scan and one stateful delivery operation. |
+| [Tests.lean](Tests.lean) | Checked examples of reordered callbacks, duplicates, forwarding, and demotion during an RPC. |
+| [ContractsTests.lean](ContractsTests.lean) | A complete execution satisfying the liveness contracts and instantiating the theorems. |
+| [Audit.lean](Audit.lean) | Transitive axiom audit of all declarations in the Resdet namespace. |
 
-The key invariant is:
+`history` is proof instrumentation recording entries that `process` handled.
+It never controls a branch or chooses a response. The key invariant, proved
+from the code, is:
 
 ```text
-replica.delivered = dedup(flatten(log.take(replica.processed)))
-replica.seen = ids(replica.delivered)
+history.length = processed
+history[k] = log[k + 1]       for every processed position k
+seen = ids(delivered)
+delivered = dedup(history)
 ```
 
-It is proved by induction over transitions, not assumed by the process rule.
-The log may contain conflicting responses for the same request ID. Processing
-in log order and keeping the first occurrence makes replicas agree.
+The processing loop uses `learned - processed` as a termination bound. That is
+the distance to the current highest learned index, not a fixed model-checking
+bound. It stops at the first missing local entry, exactly as the paper does.
 
-`dedupFrom seen items` returns the first item for each ID absent from `seen`.
-The single `deliver` handler appends those items to the delivery history and
-their IDs to `seen`. Both fields belong to each core replica's `DeliveryState`.
-The protocol uses the core's `processBatch` directly, so there is one processing
-implementation and no separate delivery adapter to relate to it. Both models
-describe Resdet; neither implements consensus.
+The main liveness proof does not assume eventual delivery. It derives it from
+actual request and callback events and explicit environment contracts. Two of
+those contracts strengthen what the paper currently states; see
+[PAPER.md](PAPER.md#assumptions-that-need-author-review). Recovery and concurrent
+memory operations also need a separate implementation argument.
 
-Liveness uses explicit assumptions about ingress, a stable live leader,
-handler/downstream progress, consensus, and learning. None directly asserts
-eventual workflow delivery. Their meanings and the supplementary stronger
-progress interface are in [PROTOCOL.md](PROTOCOL.md).
-
-## Regression examples and limits
-
-- [Tests.lean](Tests.lean): reordered learning, conflicting responses, batches,
-  and examples showing why deduplication and prefix processing matter.
-- [ProtocolTests.lean](ProtocolTests.lean): request arrival, authorized dispatch, failover,
-  repeated physical execution, retained-state recovery, retries, and a stalled
-  execution showing why liveness needs fairness.
-- [CrashStopTests.lean](CrashStopTests.lean): a failed leader stays down while
-  its successor retries and the survivors deliver.
-- [PaperTests.lean](PaperTests.lean): batching and application-order examples.
-
-These examples supplement the general proofs. They do not establish that the
-model matches the implementation. There is no checked refinement from Go or
-TLA+, no verification of request-ID generation, and no guarantee of exactly-once
-external side effects. Application-order results assume that the application
-consumes Resdet's delivery order.
+From the repository root, run `make check-lean` with Lean 4.24.0 installed, or
+first run `make fetch-lean`. The command builds the proofs and examples, treats
+warnings as errors, and audits every Resdet declaration. Allowed logical axioms
+are `propext`, `Quot.sound`, and `Classical.choice`; no new axioms or unfinished
+proofs are permitted. See [PROTOCOL.md](PROTOCOL.md) for the proof contracts.
