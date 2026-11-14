@@ -48,9 +48,13 @@ theorem example_agreement {request x y : Nat}
   response_agreement sample_reachable false true hx hy
 
 -- Boundary cases: empty batches, duplicate slots, and conflicting responses.
-theorem empty_batch : applyItems [] [(1, 7)] = [(1, 7)] := by decide
+theorem empty_batch :
+    deliver [] { seen := [1], delivered := [(1, 7)] } =
+      ({ seen := [1], delivered := [(1, 7)] } : DeliveryState Nat Nat) := by decide
 
-theorem duplicate_slot : applyItems batch0 (applyItems batch0 []) = [(1, 7), (2, 8)] := by decide
+theorem duplicate_slot :
+    deliver batch0 (deliver batch0 {}) =
+      { seen := [1, 2], delivered := [(1, 7), (2, 8)] } := by decide
 
 theorem conflicting_response : dedup [(1, 7), (1, 999)] = [(1, 7)] := by decide
 
@@ -61,9 +65,9 @@ theorem dedup_respects_seen :
 
 /-- Both old and earlier-batch responses survive conflicting later duplicates. -/
 theorem delivery_dedup_across_batches :
-    let first := applyWithDedup batch0 [1] [(1, 5)]
-    applyWithDedup batch1 first.1 first.2 =
-      ([1, 2, 3], [(1, 5), (2, 8), (3, 10)]) := by decide
+    let first := deliver batch0 { seen := [1], delivered := [(1, 5)] }
+    deliver batch1 first =
+      { seen := [1, 2, 3], delivered := [(1, 5), (2, 8), (3, 10)] } := by decide
 
 -- Counterexamples to weakened handlers, deliberately NOT constructors of Step.
 def noDedupOutput : List (Item Nat Nat) := [] ++ [(1, 7), (1, 9)]
@@ -76,7 +80,8 @@ def conflictLog : List (List (Item Nat Nat)) := [[(1, 7)], [(1, 9)]]
 def skippedPrefix : ExampleState :=
   { log := conflictLog
     replica := fun r =>
-      if r then ⟨2, [0, 1], [(1, 9)]⟩ else ⟨1, [0, 1], [(1, 7)]⟩ }
+      if r then { processed := 2, learned := [0, 1], seen := [1], delivered := [(1, 9)] }
+      else { processed := 1, learned := [0, 1], seen := [1], delivered := [(1, 7)] } }
 
 theorem skipping_prefix_breaks_agreement :
     (1, 7) ∈ (skippedPrefix.replica false).delivered ∧
@@ -89,7 +94,7 @@ theorem skipped_prefix_unreachable : ¬ Reachable skippedPrefix := by
   exact (by decide : (7 : Nat) ≠ 9) bad
 
 def earlyDelivery : ExampleState :=
-  { log := [], replica := fun _ => ⟨0, [], [(1, 7)]⟩ }
+  { log := [], replica := fun _ => { seen := [1], delivered := [(1, 7)] } }
 
 theorem early_delivery_unreachable : ¬ Reachable earlyDelivery := by
   intro h

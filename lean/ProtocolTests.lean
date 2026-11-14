@@ -20,10 +20,10 @@ def p9 := { p8 with proposed := (1, 9) :: p8.proposed }
 def batch : List (Item Nat Nat) := [(1, 9), (1, 7)]
 def p10 := { p9 with core := appendBatch p9.core batch }
 def p11 := { p10 with core := learnSlot p10.core true 0 }
-def p12 := process p11 true batch
+def p12 := { p11 with core := processBatch p11.core true batch }
 def p13 := { p12 with up := fun r => if r = false then true else p12.up r }
 def p14 := { p13 with core := learnSlot p13.core false 0 }
-def p15 := process p14 false batch
+def p15 := { p14 with core := processBatch p14.core false batch }
 
 /-- The retained-state recovery example, followed by stuttering. -/
 def recoveryTrace : Nat → S
@@ -117,8 +117,8 @@ theorem stable_leader_attempts_pending_request :
 
 theorem recovered_replicas_agree :
     (p15.core.replica false).delivered = [(1, 9)] ∧
-    (p15.core.replica true).delivered = [(1, 9)] ∧ p15.seen false = [1] ∧
-    p15.seen true = [1] := by decide
+    (p15.core.replica true).delivered = [(1, 9)] ∧ (p15.core.replica false).seen = [1] ∧
+    (p15.core.replica true).seen = [1] := by decide
 
 theorem physical_execution_can_repeat : p15.dispatches.length = 2 ∧
     ¬ (p15.dispatches.map fun d => d.2.1).Nodup := by decide

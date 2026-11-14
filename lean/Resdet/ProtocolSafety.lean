@@ -1,4 +1,4 @@
-import Resdet.Protocol
+import Resdet.ResdetProtocol
 
 namespace Resdet.Protocol
 
@@ -214,7 +214,7 @@ structure Safety (cfg : Config) (s : State Node Request Payload Response) : Prop
   proposalValidity : s.proposed ⊆ s.observed
   consensusValidity : s.core.log.flatten ⊆ s.proposed
   physicalOnce : cfg.crashes = false → (s.dispatches.map fun d => d.2.1).Nodup
-  dedupConsistent : DedupConsistent s
+  dedupConsistent : ∀ r, (s.core.replica r).seen = (s.core.replica r).delivered.map Prod.fst
   contiguousPrefix : Resdet.Invariant s.core
   deliveryOnce : ∀ r, ((s.core.replica r).delivered.map Prod.fst).Nodup
   agreement : ∀ left right request a b,
@@ -233,7 +233,7 @@ theorem all_safety (h : Reachable cfg leader s) : Safety cfg s :=
     proposalValidity := proposal_validity h
     consensusValidity := consensus_validity h
     physicalOnce := at_most_one_physical_dispatch h
-    dedupConsistent := reachable_dedup_consistent h
+    dedupConsistent := (Resdet.reachable_invariant (reachable_refines h)).dedupConsistent
     contiguousPrefix := Resdet.reachable_invariant (reachable_refines h)
     deliveryOnce := at_most_once_delivery h
     agreement := fun l r _ _ _ ha hb => response_agreement h l r ha hb

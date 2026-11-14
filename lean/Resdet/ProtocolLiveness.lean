@@ -30,7 +30,7 @@ theorem Behavior.core {cfg : Config} {leader : Node}
   constructor
   · simp [b.init, initial]
   · intro t
-    exact step_refines (reachable_dedup_consistent (b.reachable t)) (b.next t)
+    exact step_refines (b.next t)
 
 theorem dispatched_step_mono {cfg : Config} {s t : State Node Request Payload Response}
     (step : Step cfg s t) {n : Node} {request : Request} (h : Dispatched s n request) :

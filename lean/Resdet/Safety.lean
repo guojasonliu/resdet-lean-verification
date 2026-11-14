@@ -1,4 +1,4 @@
-import Resdet.Model
+import Resdet.DeliveryModel
 
 namespace Resdet
 
@@ -80,7 +80,7 @@ theorem step_delivery_monotone {s t : State Node Request Response} (h : Step s t
   | process node batch _ _ =>
       by_cases hn : r = node
       · simpa [processBatch, hn] using
-          output_prefix_applyItems batch (s.replica node).delivered
+          delivered_prefix_deliver batch (s.replica node).toDeliveryState
       · simp [processBatch, hn]
 
 end Resdet

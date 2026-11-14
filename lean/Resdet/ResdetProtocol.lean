@@ -1,7 +1,7 @@
 import Resdet.Safety
 
 /-!
-Protocol transitions above an abstract, append-only consensus log.
+Resdet request handling above an abstract, append-only consensus log.
 Arrival and forwarding are abstracted as a global received-request history,
 retained across leaders. Crash/recovery changes availability, not recorded
 events or delivery state. Request bodies are not tracked through execution.
@@ -16,7 +16,6 @@ abbrev Execution (Node Request Response : Type) := Node × Request × Response
 
 structure State (Node Request Payload Response : Type) where
   core : Resdet.State Node Request Response
-  seen : Node → List Request
   leader : Option Node
   up : Node → Bool
   requests : List (Item Request Payload)
@@ -29,26 +28,11 @@ variable {Node Request Payload Response : Type}
 variable [DecidableEq Node] [DecidableEq Request]
 
 def initial (leader : Node) : State Node Request Payload Response :=
-  ⟨Resdet.initial, fun _ => [], some leader, fun _ => true, [], [], [], [], []⟩
+  ⟨Resdet.initial, some leader, fun _ => true, [], [], [], [], []⟩
 
 /-- A nested invocation has arrived; network forwarding is abstracted away. -/
 def Received (s : State Node Request Payload Response) (request : Request) : Prop :=
   ∃ payload, (request, payload) ∈ s.requests
-
-/-- Stored delivery-deduplication IDs match the observable delivery history. -/
-def DedupConsistent (s : State Node Request Payload Response) : Prop :=
-  ∀ r, s.seen r = (s.core.replica r).delivered.map Prod.fst
-
-def process (s : State Node Request Payload Response) (r : Node)
-    (batch : List (Item Request Response)) :=
-  let result := applyWithDedup batch (s.seen r) (s.core.replica r).delivered
-  let replicas := fun n =>
-    if n = r then
-      { s.core.replica n with processed := (s.core.replica n).processed + 1,
-                              delivered := result.2 }
-    else s.core.replica n
-  { s with core := { s.core with replica := replicas },
-           seen := fun n => if n = r then result.1 else s.seen n }
 
 inductive Step (cfg : Config) : State Node Request Payload Response →
     State Node Request Payload Response → Prop
@@ -83,7 +67,7 @@ inductive Step (cfg : Config) : State Node Request Payload Response →
   | process (s) (r batch) (live : s.up r = true)
       (learned : (s.core.replica r).processed ∈ (s.core.replica r).learned)
       (entry : s.core.log[(s.core.replica r).processed]? = some batch) :
-      Step cfg s (process s r batch)
+      Step cfg s { s with core := processBatch s.core r batch }
   | crash (s) (n) (enabled : cfg.crashes = true) (live : s.up n = true) :
       Step cfg s { s with
         up := fun r => if r = n then false else s.up r
@@ -99,52 +83,20 @@ inductive Reachable (cfg : Config) (leader : Node) : State Node Request Payload 
   | init : Reachable cfg leader (initial leader)
   | step {s t} : Reachable cfg leader s → Step cfg s t → Reachable cfg leader t
 
-theorem process_core (s : State Node Request Payload Response) (h : DedupConsistent s)
-    (r : Node) (batch : List (Item Request Response)) :
-    (process s r batch).core = processBatch s.core r batch := by
-  simp only [process, applyWithDedup_correct batch _ _ (h r), processBatch]
-  congr 1
-  funext n
-  by_cases hn : n = r
-  · subst n; simp
-  · simp [hn]
-
-theorem step_dedup_consistent {cfg : Config} {s t : State Node Request Payload Response}
-    (h : DedupConsistent s) (step : Step cfg s t) : DedupConsistent t := by
-  cases step with
-  | learn r slot _ _ =>
-      intro n
-      by_cases hn : n = r <;> simpa [learnSlot, hn] using h n
-  | process r batch _ _ _ =>
-      intro n
-      simp only [process, applyWithDedup_correct batch _ _ (h r)]
-      by_cases hn : n = r
-      · subst n; simp
-      · simpa [hn] using h n
-  | _ => exact h
-
 /-- A proved forward simulation, not an assumed invariant in the full model. -/
 theorem step_refines {cfg : Config} {s t : State Node Request Payload Response}
-    (h : DedupConsistent s) (step : Step cfg s t) : Resdet.Step s.core t.core := by
+    (step : Step cfg s t) : Resdet.Step s.core t.core := by
   cases step with
   | decide batch _ => exact .append _ batch
   | learn r slot _ valid => exact .learn _ r slot valid
-  | process r batch _ learned entry =>
-      rw [process_core s h]
-      exact .process _ r batch learned entry
+  | process r batch _ learned entry => exact .process _ r batch learned entry
   | _ => exact .stutter _
-
-theorem reachable_dedup_consistent {cfg : Config} {leader : Node} {s : State Node Request Payload Response}
-    (h : Reachable cfg leader s) : DedupConsistent s := by
-  induction h with
-  | init => intro r; rfl
-  | step _ step ih => exact step_dedup_consistent ih step
 
 theorem reachable_refines {cfg : Config} {leader : Node}
     {s : State Node Request Payload Response} (h : Reachable cfg leader s) :
     Resdet.Reachable s.core := by
   induction h with
   | init => exact .init
-  | step reach step ih => exact .step ih (step_refines (reachable_dedup_consistent reach) step)
+  | step _ step ih => exact .step ih (step_refines step)
 
 end Resdet.Protocol

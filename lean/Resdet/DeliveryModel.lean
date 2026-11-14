@@ -6,14 +6,14 @@ An unbounded transition-system abstraction of Resdet's delivery core.
 Consensus is an append-only global log, not an implementation of Raft.
 Learning is arbitrarily reordered; only the next learned slot can be processed.
 Slots are zero-based. No fairness, finite-state bound, or response uniqueness
-is assumed. The independent `delivered` field is updated incrementally.
+is assumed. Each replica stores its delivery history and seen request IDs;
+`processBatch` updates both through the shared `deliver` operation.
 -/
 namespace Resdet
 
-structure ReplicaState (Request Response : Type) where
+structure ReplicaState (Request Response : Type) extends DeliveryState Request Response where
   processed : Nat := 0
   learned : List Nat := []
-  delivered : List (Item Request Response) := []
   deriving DecidableEq
 
 structure State (Node Request Response : Type) where
@@ -38,7 +38,7 @@ def processBatch (s : State Node Request Response) (r : Node)
       if n = r then
         { s.replica n with
           processed := (s.replica n).processed + 1
-          delivered := applyItems batch (s.replica n).delivered }
+          toDeliveryState := deliver batch (s.replica n).toDeliveryState }
       else s.replica n }
 
 /-- Only these rules generate executions. `process` checks the actual log
@@ -62,6 +62,7 @@ structure Invariant (s : State Node Request Response) : Prop where
   learnedOnlyDecided : ∀ r slot, slot ∈ (s.replica r).learned → slot < s.log.length
   processedPrefixLearned : ∀ r slot, slot < (s.replica r).processed →
     slot ∈ (s.replica r).learned
+  dedupConsistent : ∀ r, (s.replica r).seen = (s.replica r).delivered.map Prod.fst
   appliedPrefixCorrect : ∀ r, (s.replica r).delivered =
     dedup ((s.log.take (s.replica r).processed).flatten)
 
@@ -84,6 +85,7 @@ theorem step_preserves_invariant {s t : State Node Request Response}
         simp only [appendBatch, List.length_append, List.length_singleton]
         omega
       · exact inv.processedPrefixLearned
+      · exact inv.dedupConsistent
       · intro r
         simp only [appendBatch]
         rw [List.take_append_of_le_length (inv.processedWithinLog r)]
@@ -109,6 +111,10 @@ theorem step_preserves_invariant {s t : State Node Request Response}
           exact Or.inr (inv.processedPrefixLearned r index hi)
         · simpa [learnSlot, hn] using
             inv.processedPrefixLearned n index (by simpa [learnSlot, hn] using hi)
+      · intro n
+        by_cases hn : n = r
+        · subst n; simpa [learnSlot] using inv.dedupConsistent r
+        · simpa [learnSlot, hn] using inv.dedupConsistent n
       · intro n
         by_cases hn : n = r
         · subst n; simpa [learnSlot] using inv.appliedPrefixCorrect r
@@ -138,12 +144,19 @@ theorem step_preserves_invariant {s t : State Node Request Response}
       · intro n
         by_cases hn : n = r
         · subst n
+          simpa [processBatch] using deliver_consistent batch
+            (s.replica r).toDeliveryState (inv.dedupConsistent r)
+        · simpa [processBatch, hn] using inv.dedupConsistent n
+      · intro n
+        by_cases hn : n = r
+        · subst n
           simp only [processBatch, ite_true]
           rw [List.take_succ, entry]
           simp only [Option.toList_some, List.flatten_append, List.flatten_cons,
             List.flatten_nil, List.append_nil]
-          rw [inv.appliedPrefixCorrect r]
-          simp only [dedup_eq_applyItems, applyItems_append]
+          simp only [deliver]
+          rw [inv.dedupConsistent r, inv.appliedPrefixCorrect r]
+          simp only [dedup, dedupFrom_append, List.nil_append]
         · simpa [processBatch, hn] using inv.appliedPrefixCorrect n
 
 theorem reachable_invariant {s : State Node Request Response} (h : Reachable s) :

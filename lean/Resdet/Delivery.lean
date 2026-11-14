@@ -1,70 +1,75 @@
 import Resdet.Dedup
 
 /-!
-Delivery adapters for the shared request-ID deduplication helper.
-The core derives seen IDs from its output; the protocol stores them explicitly.
-Both use `dedupFrom` to select new responses, preserving their input order.
+One delivery operation for both the delivery model and the request protocol.
+The stored request IDs and observable output are updated together.
 -/
 namespace Resdet
 
+structure DeliveryState (Request Response : Type) where
+  seen : List Request := []
+  delivered : List (Item Request Response) := []
+  deriving DecidableEq
+
 variable {Request Response : Type} [DecidableEq Request]
 
-/-- Extend a delivery history with the first response for each unseen ID. -/
-def applyItems (items output : List (Item Request Response)) : List (Item Request Response) :=
-  output ++ dedupFrom (output.map Prod.fst) items
+/-- Deliver the first response for each unseen ID, preserving item order. -/
+def deliver (items : List (Item Request Response)) (s : DeliveryState Request Response) :
+    DeliveryState Request Response :=
+  let fresh := dedupFrom s.seen items
+  { seen := s.seen ++ fresh.map Prod.fst, delivered := s.delivered ++ fresh }
 
-/-- Maintain the paper's delivery-deduplication state alongside the output history. -/
-def applyWithDedup (items : List (Item Request Response)) (seen : List Request)
-    (output : List (Item Request Response)) : List Request × List (Item Request Response) :=
-  let fresh := dedupFrom seen items
-  (seen ++ fresh.map Prod.fst, output ++ fresh)
+/-- The explicit deduplication state continues to match the delivery history. -/
+theorem deliver_consistent (items : List (Item Request Response))
+    (s : DeliveryState Request Response) (consistent : s.seen = s.delivered.map Prod.fst) :
+    (deliver items s).seen = (deliver items s).delivered.map Prod.fst := by
+  simp [deliver, consistent, List.map_append]
 
-/-- The explicit deduplication state agrees with the history-derived adapter. -/
-theorem applyWithDedup_correct (items : List (Item Request Response)) (seen : List Request)
-    (output : List (Item Request Response)) (consistent : seen = output.map Prod.fst) :
-    applyWithDedup items seen output =
-      ((applyItems items output).map Prod.fst, applyItems items output) := by
-  subst seen
-  simp [applyWithDedup, applyItems, List.map_append]
+theorem deliver_empty (s : DeliveryState Request Response) : deliver [] s = s := by
+  cases s
+  simp [deliver, dedupFrom]
 
-theorem dedup_eq_applyItems (items : List (Item Request Response)) :
-    dedup items = applyItems items [] := by
-  simp [applyItems, dedup]
+theorem deliver_initial (items : List (Item Request Response)) :
+    (deliver items {}).delivered = dedup items := by
+  simp [deliver, dedup]
 
-/-- Processing consecutive batches is equivalent to processing their concatenation. -/
-theorem applyItems_append (xs ys output : List (Item Request Response)) :
-    applyItems (xs ++ ys) output = applyItems ys (applyItems xs output) := by
-  simp [applyItems, dedupFrom_append, List.map_append, List.append_assoc]
+/-- Processing consecutive batches equals processing their concatenation. -/
+theorem deliver_append (xs ys : List (Item Request Response))
+    (s : DeliveryState Request Response) :
+    deliver (xs ++ ys) s = deliver ys (deliver xs s) := by
+  simp [deliver, dedupFrom_append, List.map_append, List.append_assoc]
 
-theorem output_prefix_applyItems (items output : List (Item Request Response)) :
-    output <+: applyItems items output :=
+theorem delivered_prefix_deliver (items : List (Item Request Response))
+    (s : DeliveryState Request Response) : s.delivered <+: (deliver items s).delivered :=
   List.prefix_append _ _
 
-theorem applyItems_nodup (items output : List (Item Request Response))
-    (unique : (output.map Prod.fst).Nodup) :
-    ((applyItems items output).map Prod.fst).Nodup := by
-  simp only [applyItems, List.map_append, List.nodup_append]
+theorem deliver_nodup (items : List (Item Request Response))
+    (s : DeliveryState Request Response) (consistent : s.seen = s.delivered.map Prod.fst)
+    (unique : (s.delivered.map Prod.fst).Nodup) :
+    ((deliver items s).delivered.map Prod.fst).Nodup := by
+  simp only [deliver, consistent, List.map_append, List.nodup_append]
   refine ⟨unique, dedupFrom_nodup _ _, ?_⟩
   intro a ha b hb same
   obtain ⟨item, member, id⟩ := List.mem_map.mp hb
   have fresh := dedupFrom_fresh member
   exact fresh (by simpa [id, same] using ha)
 
-theorem applyItems_mem {item : Item Request Response}
-    (items output : List (Item Request Response))
-    (member : item ∈ applyItems items output) : item ∈ output ∨ item ∈ items := by
+theorem deliver_mem {item : Item Request Response}
+    (items : List (Item Request Response)) (s : DeliveryState Request Response)
+    (member : item ∈ (deliver items s).delivered) : item ∈ s.delivered ∨ item ∈ items := by
   rcases List.mem_append.mp member with old | fresh
   · exact Or.inl old
   · exact Or.inr (dedupFrom_mem fresh)
 
-/-- Every input ID is delivered, possibly using a response delivered earlier. -/
-theorem applyItems_covers (items output : List (Item Request Response)) :
-    ∀ request, request ∈ output.map Prod.fst ∨ request ∈ items.map Prod.fst →
-      request ∈ (applyItems items output).map Prod.fst := by
+/-- Every input ID is represented afterward, possibly by an earlier response. -/
+theorem deliver_covers (items : List (Item Request Response))
+    (s : DeliveryState Request Response) (consistent : s.seen = s.delivered.map Prod.fst) :
+    ∀ request, request ∈ s.delivered.map Prod.fst ∨ request ∈ items.map Prod.fst →
+      request ∈ (deliver items s).delivered.map Prod.fst := by
   intro request member
-  simp only [applyItems, List.map_append, List.mem_append]
+  simp only [deliver, List.map_append, List.mem_append]
   rcases member with old | incoming
   · exact Or.inl old
-  · exact dedupFrom_covers _ _ request incoming
+  · simpa [consistent] using dedupFrom_covers s.seen items request incoming
 
 end Resdet

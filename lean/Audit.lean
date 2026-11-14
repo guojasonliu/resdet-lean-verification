@@ -14,7 +14,8 @@ run_cmd do
   let required := #[
     `Resdet.dedupFrom_append, `Resdet.dedupFrom_nodup,
     `Resdet.dedupFrom_fresh, `Resdet.dedupFrom_covers,
-    `Resdet.applyWithDedup_correct,
+    `Resdet.deliver_consistent, `Resdet.deliver_append,
+    `Resdet.deliver_nodup, `Resdet.deliver_covers,
     `Resdet.reachable_invariant, `Resdet.Protocol.reachable_refines,
     `Resdet.Protocol.all_safety,
     `Resdet.Paper.theorem_1_safety, `Resdet.Paper.theorem_2_liveness,

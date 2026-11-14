@@ -20,7 +20,7 @@ Names are in `Resdet.Paper` unless qualified otherwise.
 | Prefix processing eventually delivers a response | `eventually_delivered` | Fair next-slot processing; suppression of duplicates leaves the first response. |
 | Every submitted request reaches every non-faulty replica | `theorem_2_crash_stop` | Crash-stop failures and the progress assumptions below. |
 | First agreed response wins, once per replica | `first_committed_response`; `Protocol.at_most_once_delivery` | Conflicting responses and duplicate log entries are allowed. |
-| Batching preserves delivery | `batching_equivalent`; `rebatching_preserves_delivery` | Entry order must be preserved. |
+| Batching preserves delivery | `batching_equivalent`; `rebatching_preserves_delivery` | Entry order must be preserved; both seen IDs and delivery history agree. |
 | Applications observe the same race winner | `race_winner_for_group` | Both consume the common delivery order for the same set of request IDs. |
 | Deterministic continuations agree | `deterministic_continuation` | Equal initial state, deterministic code, and equally long consumed prefixes. |
 

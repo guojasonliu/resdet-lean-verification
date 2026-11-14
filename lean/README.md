@@ -39,10 +39,10 @@ Start with the definitions and theorem statements, then read their proofs.
 | File | What to review |
 | --- | --- |
 | [Dedup.lean](Resdet/Dedup.lean) | Shared first-occurrence scan and its uniqueness, coverage, and batch-composition guarantees. |
-| [Delivery.lean](Resdet/Delivery.lean) | Thin delivery wrappers around the shared helper, using either IDs from the delivery history or separately stored delivered IDs. |
-| [Model.lean](Resdet/Model.lean) | Four core actions: append, learn, process, stutter. The invariant connects each stored delivery history to a deduplicated log prefix. |
+| [Delivery.lean](Resdet/Delivery.lean) | One delivery handler updates the stored delivered IDs and response history together. |
+| [DeliveryModel.lean](Resdet/DeliveryModel.lean) | Four core actions: append, learn, process, stutter. The invariant connects each stored delivery history to a deduplicated log prefix. |
 | [Safety.lean](Resdet/Safety.lean) | Agreement and at-most-once delivery follow from that invariant. |
-| [Protocol.lean](Resdet/Protocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Request arrival, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
+| [ResdetProtocol.lean](Resdet/ResdetProtocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Request arrival, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
 | [Temporal.lean](Resdet/Temporal.lean), [ProtocolLiveness.lean](Resdet/ProtocolLiveness.lean), [ProposalRetry.lean](Resdet/ProposalRetry.lean) | Handler progress, stable-leader proposal attempts, and prefix processing yield delivery. |
 | [Paper.lean](Resdet/Paper.lean), [CrashStop.lean](Resdet/CrashStop.lean) | Agreement across different times and eventual permanent delivery to non-faulty replicas. |
 
@@ -50,17 +50,19 @@ The key invariant is:
 
 ```text
 replica.delivered = dedup(flatten(log.take(replica.processed)))
+replica.seen = ids(replica.delivered)
 ```
 
 It is proved by induction over transitions, not assumed by the process rule.
 The log may contain conflicting responses for the same request ID. Processing
 in log order and keeping the first occurrence makes replicas agree.
 
-`dedupFrom seen items` is the single duplicate-suppression implementation.
-It returns the first item for each ID absent from `seen`. The delivery wrappers
-append those items to the history; the protocol wrapper also updates its
-delivered-ID state. Their consistency proof connects the explicit state to the
-history without introducing another deduplication algorithm.
+`dedupFrom seen items` returns the first item for each ID absent from `seen`.
+The single `deliver` handler appends those items to the delivery history and
+their IDs to `seen`. Both fields belong to each core replica's `DeliveryState`.
+The protocol uses the core's `processBatch` directly, so there is one processing
+implementation and no separate delivery adapter to relate to it. Both models
+describe Resdet; neither implements consensus.
 
 Liveness uses explicit assumptions about ingress, a stable live leader,
 handler/downstream progress, consensus, and learning. None directly asserts

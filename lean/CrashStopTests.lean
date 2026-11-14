@@ -25,9 +25,9 @@ def s9 := { s8 with proposed := (1, 9) :: s8.proposed }
 def batch : List (Item Nat Nat) := [(1, 9)]
 def s10 := { s9 with core := appendBatch s9.core batch }
 def s11 := { s10 with core := learnSlot s10.core 1 0 }
-def s12 := Protocol.process s11 1 batch
+def s12 := { s11 with core := processBatch s11.core 1 batch }
 def s13 := { s12 with core := learnSlot s12.core 2 0 }
-def s14 := Protocol.process s13 2 batch
+def s14 := { s13 with core := processBatch s13.core 2 batch }
 
 /-- Three replicas, one permanently crashed leader, and a retry by its successor.
 Only the two survivors learn/deliver; no recovery transition occurs. -/

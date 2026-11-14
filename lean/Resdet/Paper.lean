@@ -48,22 +48,22 @@ theorem firstFor_unique {items : List (Item Request Response)}
 
 /-- The incremental batched handler is equivalent to the unbatched ordered scan. -/
 def applyBatches (batches : List (List (Item Request Response)))
-    (output : List (Item Request Response)) :=
-  batches.foldl (fun acc batch => applyItems batch acc) output
+    (state : DeliveryState Request Response) :=
+  batches.foldl (fun acc batch => deliver batch acc) state
 
 theorem batching_equivalent (batches : List (List (Item Request Response)))
-    (output : List (Item Request Response)) :
-    applyBatches batches output = applyItems batches.flatten output := by
-  induction batches generalizing output with
-  | nil => simp [applyBatches, applyItems, dedupFrom]
+    (state : DeliveryState Request Response) :
+    applyBatches batches state = deliver batches.flatten state := by
+  induction batches generalizing state with
+  | nil => simp [applyBatches, deliver, dedupFrom]
   | cons batch rest ih =>
-      simpa [applyBatches, List.flatten_cons, applyItems_append] using
-        ih (applyItems batch output)
+      simpa [applyBatches, List.flatten_cons, deliver_append] using
+        ih (deliver batch state)
 
 /-- Regrouping boundaries cannot change delivery, provided flattened order is unchanged. -/
 theorem rebatching_preserves_delivery {a b : List (List (Item Request Response))}
-    (sameOrder : a.flatten = b.flatten) (output : List (Item Request Response)) :
-    applyBatches a output = applyBatches b output := by
+    (sameOrder : a.flatten = b.flatten) (state : DeliveryState Request Response) :
+    applyBatches a state = applyBatches b state := by
   rw [batching_equivalent, batching_equivalent, sameOrder]
 
 end Lists

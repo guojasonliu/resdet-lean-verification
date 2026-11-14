@@ -7,8 +7,8 @@
 | Field | Meaning |
 | --- | --- |
 | `core.log` | Shared append-only log of response batches. |
-| `core.replica` | Per-replica learned slots, processed prefix length, and delivered responses. |
-| `seen` | Request IDs whose responses have already been delivered. |
+| `core.replica` | Per-replica learned slots and processed prefix length. |
+| `core.replica[r].seen`, `core.replica[r].delivered` | Shared delivery state: IDs already delivered and their response history. |
 | `leader`, `up` | Current leader and replica availability. |
 | `requests` | Global history of nested invocations `(rid, payload)` made available to Resdet. |
 | `dispatches`, `executions` | Sender/request/leader snapshots and sender/request/response histories. |
@@ -33,16 +33,17 @@ See the [paper correspondence](PAPER.md#recovery-remains-a-model-gap).
 
 ## Safety proof
 
-1. Both delivery handlers use `dedupFrom` in `Dedup.lean`. Its guarantees cover
-   unique fresh IDs, provenance, coverage, and composition across batches.
-   `applyWithDedup_correct` relates explicit delivered-ID state to the core handler.
-2. `reachable_dedup_consistent` proves `seen` always equals the delivered request IDs.
-3. `step_refines` and `reachable_refines` project protocol executions to core
-   executions, allowing core stuttering for protocol-only actions.
-4. The core invariant proves each delivered sequence is the deduplicated
-   processed log prefix. This yields agreement, prefix agreement, and
-   at-most-once delivery.
-5. `Protocol.all_safety` combines those results with request, dispatch, and
+1. `dedupFrom` in `Dedup.lean` proves unique fresh IDs, provenance, coverage,
+   and composition across batches. The single `deliver` handler updates
+   `DeliveryState.seen` and `DeliveryState.delivered` together.
+2. The core invariant proves that `seen` equals the delivered request IDs and
+   each delivered sequence is the deduplicated processed log prefix. This
+   yields agreement, prefix agreement, and at-most-once delivery.
+3. The protocol calls the core's `processBatch` directly. `step_refines` and
+   `reachable_refines` project protocol executions to core executions, allowing
+   core stuttering for protocol-only actions; no processing-equivalence proof
+   is needed.
+4. `Protocol.all_safety` combines those results with request, dispatch, and
    response provenance: delivered items have a received invocation, a physical
    execution, a proposal, and an agreed log entry.
 

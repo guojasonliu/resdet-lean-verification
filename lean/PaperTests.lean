@@ -8,11 +8,12 @@ def batched : List (List (Item Nat Nat)) :=
   [[(10, 1), (20, 2)], [], [(10, 99)], [(30, 3), (20, 77)]]
 
 theorem batch_boundaries_do_not_change_result :
-    applyBatches batched [] = applyBatches (ordered.map (fun item => [item])) [] :=
-  rebatching_preserves_delivery (by decide) []
+    applyBatches batched {} = applyBatches (ordered.map (fun item => [item])) {} :=
+  rebatching_preserves_delivery (by decide) {}
 
 theorem first_not_last_response :
-    applyBatches batched [] = [(10, 1), (20, 2), (30, 3)] ∧
+    applyBatches batched {} =
+      { seen := [10, 20, 30], delivered := [(10, 1), (20, 2), (30, 3)] } ∧
     firstFor 10 ordered = some (10, 1) := by decide
 
 theorem recovered_delivery_is_first_committed :
