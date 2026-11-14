@@ -172,10 +172,8 @@ variable {Node Request Payload Response : Type} [DecidableEq Node] [DecidableEq 
 
 /-- The paper only needs handler progress for requests not yet agreed. In
 particular, this does not demand another physical execution of a completed call. -/
-structure PendingHandlers (cfg : Protocol.Config)
-    (tr : Nat → Protocol.State Node Request Payload Response) (n : Node) (request : Request) : Prop where
-  select : WeakFair (fun t => Protocol.SelectEnabled cfg (tr t) n request ∧
-    ¬ Protocol.Agreed (tr t) request) (fun t => Protocol.Selected (tr (t+1)) request)
+structure PendingHandlers (tr : Nat → Protocol.State Node Request Payload Response)
+    (n : Node) (request : Request) : Prop where
   dispatch : WeakFair (fun t => Protocol.DispatchEnabled (tr t) n request ∧
     ¬ Protocol.Agreed (tr t) request) (fun t => Protocol.Dispatched (tr (t+1)) n request)
   respond : WeakFair (fun t => Protocol.RespondEnabled (tr t) n request ∧
@@ -184,11 +182,10 @@ structure PendingHandlers (cfg : Protocol.Config)
     (fun t => ∃ value, Protocol.ProposalAttempt tr t n (request, value))
 
 omit [DecidableEq Node] [DecidableEq Request] in
-theorem PendingHandlers.ofRetry {cfg : Protocol.Config}
+theorem PendingHandlers.ofRetry
     {tr : Nat → Protocol.State Node Request Payload Response} {n : Node} {request : Request}
-    (h : Protocol.RetryProgress cfg tr n request) : PendingHandlers cfg tr n request := by
-  refine ⟨?_, ?_, ?_, h.repropose⟩
-  · intro start enabled; exact h.select start (fun t ht => (enabled t ht).1)
+    (h : Protocol.RetryProgress tr n request) : PendingHandlers tr n request := by
+  refine ⟨?_, ?_, h.repropose⟩
   · intro start enabled; exact h.dispatch start (fun t ht => (enabled t ht).1)
   · intro start enabled; exact h.respond start (fun t ht => (enabled t ht).1)
 
@@ -207,8 +204,8 @@ theorem eventually_agreed {cfg : Protocol.Config} {leader n : Node}
     {tr : Nat → Protocol.State Node Request Payload Response}
     (b : Protocol.Behavior cfg leader tr) (start : Nat)
     (stable : Protocol.StableLeader tr n start) (request : Request)
-    (ready : Protocol.GateReady cfg (tr start) request)
-    (handlers : PendingHandlers cfg tr n request)
+    (ready : Protocol.Received (tr start) request)
+    (handlers : PendingHandlers tr n request)
     (consensus : Protocol.StableConsensusProgress tr n start) :
     EventuallyFrom start (fun t => Protocol.Agreed (tr t) request) := by
   classical
@@ -216,9 +213,8 @@ theorem eventually_agreed {cfg : Protocol.Config} {leader n : Node}
   intro never
   have stillPending : ∀ t, start ≤ t → ¬ Protocol.Agreed (tr t) request :=
     fun t ht agreed => never ⟨t, ht, agreed⟩
-  have progress : Protocol.RetryProgress cfg tr n request :=
-    ⟨⟨pending_fairness stillPending handlers.select,
-      pending_fairness stillPending handlers.dispatch,
+  have progress : Protocol.RetryProgress tr n request :=
+    ⟨⟨pending_fairness stillPending handlers.dispatch,
       pending_fairness stillPending handlers.respond⟩, handlers.repropose⟩
   exact never (Protocol.eventually_agreed_stable_consensus b start stable request ready
     progress consensus)
@@ -227,15 +223,15 @@ theorem eventually_delivered {cfg : Protocol.Config} {leader n : Node}
     {tr : Nat → Protocol.State Node Request Payload Response}
     (b : Protocol.Behavior cfg leader tr) (stabilizes : Nat)
     (stable : Protocol.StableLeader tr n stabilizes) (request : Request)
-    (ingress : EventuallyFrom 0 (fun t => Protocol.GateReady cfg (tr t) request))
-    (handlers : PendingHandlers cfg tr n request)
+    (ingress : EventuallyFrom 0 (fun t => Protocol.Received (tr t) request))
+    (handlers : PendingHandlers tr n request)
     (consensus : Protocol.StableConsensusProgress tr n stabilizes)
     (r : Node) (delivery : DeliveryProgress (fun t => (tr t).core) r) :
     EventuallyFrom 0 (fun t => ∃ value, (request, value) ∈ ((tr t).core.replica r).delivered) := by
   obtain ⟨received, _, ready⟩ := ingress
   let start := max stabilizes received
-  have readyNow : Protocol.GateReady cfg (tr start) request :=
-    propagate (fun t ht => Protocol.gate_step_mono (b.next t) ht) (Nat.le_max_right _ _) ready
+  have readyNow : Protocol.Received (tr start) request :=
+    propagate (fun t ht => Protocol.step_received_mono (b.next t) ht) (Nat.le_max_right _ _) ready
   have stableNow : Protocol.StableLeader tr n start :=
     fun t ht => stable t (Nat.le_trans (Nat.le_max_left _ _) ht)
   have consensusNow : Protocol.StableConsensusProgress tr n start :=
@@ -244,24 +240,6 @@ theorem eventually_delivered {cfg : Protocol.Config} {leader n : Node}
   obtain ⟨t, _, delivered⟩ := agreed_eventually_delivered b.core r delivery d agreed
   exact ⟨t, Nat.zero_le _, delivered⟩
 
-omit [DecidableEq Node] [DecidableEq Request] in
-/-- The paper's core Resdet path has no Aegean quorum gate: one arrival suffices. -/
-theorem single_arrival_ready {cfg : Protocol.Config} (quorumOne : cfg.quorum = 1)
-    {s : Protocol.State Node Request Payload Response} {sender : Node}
-    {request : Request} {payload : Payload} (arrival : (sender, request, payload) ∈ s.ballots) :
-    Protocol.GateReady cfg s request := by
-  refine ⟨payload, false, ?_, by simp⟩
-  exact ⟨[sender], by simp, by simp [quorumOne], by simpa using arrival⟩
-
-omit [DecidableEq Node] [DecidableEq Request] in
-/-- Section 6.1's enabled force-yield path needs one arrival, not a matching quorum.
-The correctness of the selected payload is deliberately not asserted. -/
-theorem fallback_arrival_ready {cfg : Protocol.Config} (fallback : cfg.timeoutFallback = true)
-    {s : Protocol.State Node Request Payload Response} {sender : Node}
-    {request : Request} {payload : Payload} (arrival : (sender, request, payload) ∈ s.ballots) :
-    Protocol.GateReady cfg s request :=
-  ⟨payload, true, ⟨sender, arrival⟩, fun _ => fallback⟩
-
 /-- Paper Theorem 2 at the protocol abstraction boundary, for every submitted
 request and non-faulty replica. L1/L2 are represented by eventual arrival;
 L3/L4 plus pending-request retries are represented by PendingHandlers and
@@ -269,12 +247,12 @@ DeliveryProgress. CrashStop.lean specializes this result to runs without recover
 The result is stronger than one delivery: it remains exactly one. -/
 theorem theorem_2_liveness {cfg : Protocol.Config} {leader n : Node}
     {tr : Nat → Protocol.State Node Request Payload Response}
-    (b : Protocol.Behavior cfg leader tr) (quorumOne : cfg.quorum = 1)
+    (b : Protocol.Behavior cfg leader tr)
     (submitted : Request → Prop) (nonfaulty : Node → Prop)
     (stabilizes : Nat) (stable : Protocol.StableLeader tr n stabilizes)
     (ingress : ∀ request, submitted request → EventuallyFrom 0
-      (fun t => ∃ sender payload, (sender, request, payload) ∈ (tr t).ballots))
-    (handlers : ∀ request, submitted request → PendingHandlers cfg tr n request)
+      (fun t => Protocol.Received (tr t) request))
+    (handlers : ∀ request, submitted request → PendingHandlers tr n request)
     (consensus : Protocol.StableConsensusProgress tr n stabilizes)
     (replicas : ∀ r, nonfaulty r → DeliveryProgress (fun t => (tr t).core) r) :
     ∀ request, submitted request → ∀ r, nonfaulty r →
@@ -282,11 +260,8 @@ theorem theorem_2_liveness {cfg : Protocol.Config} {leader n : Node}
         (request, value) ∈ ((tr later).core.replica r).delivered ∧
         (((tr later).core.replica r).delivered.map Prod.fst).count request = 1 := by
   intro request hs r hr
-  obtain ⟨arrival, ha, sender, payload, received⟩ := ingress request hs
-  have ready : EventuallyFrom 0 (fun t => Protocol.GateReady cfg (tr t) request) :=
-    ⟨arrival, ha, single_arrival_ready quorumOne received⟩
   obtain ⟨time, _, value, delivered⟩ := eventually_delivered b
-    stabilizes stable request ready (handlers request hs) consensus r (replicas r hr)
+    stabilizes stable request (ingress request hs) (handlers request hs) consensus r (replicas r hr)
   refine ⟨time, value, ?_⟩
   intro later hl
   have member := (delivery_persists b.core r hl).subset delivered

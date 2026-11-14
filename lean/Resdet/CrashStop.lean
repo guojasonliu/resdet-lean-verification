@@ -66,18 +66,18 @@ through the stable leader (ingress/PendingHandlers); no failed handler must reco
 The conclusion is only for non-faulty replicas, and remains exactly once. -/
 theorem theorem_2_crash_stop {cfg : Protocol.Config} {leader n : Node}
     {tr : Nat → Protocol.State Node Request Payload Response} (b : CrashStopBehavior cfg leader tr)
-    (quorumOne : cfg.quorum = 1) (submitted : Request → Prop)
+    (submitted : Request → Prop)
     (stabilizes : Nat) (stable : Protocol.StableLeader tr n stabilizes)
     (ingress : ∀ request, submitted request → EventuallyFrom 0
-      (fun t => ∃ sender payload, (sender, request, payload) ∈ (tr t).ballots))
-    (handlers : ∀ request, submitted request → PendingHandlers cfg tr n request)
+      (fun t => Protocol.Received (tr t) request))
+    (handlers : ∀ request, submitted request → PendingHandlers tr n request)
     (consensus : Protocol.StableConsensusProgress tr n stabilizes)
     (replicas : ∀ r, NonFaulty tr r → DeliveryProgress (fun t => (tr t).core) r) :
     ∀ request, submitted request → ∀ r, NonFaulty tr r →
       ∃ time value, ∀ later, time ≤ later →
         (request, value) ∈ ((tr later).core.replica r).delivered ∧
         (((tr later).core.replica r).delivered.map Prod.fst).count request = 1 :=
-  theorem_2_liveness b.protocol quorumOne submitted (NonFaulty tr) stabilizes stable
+  theorem_2_liveness b.protocol submitted (NonFaulty tr) stabilizes stable
     ingress handlers consensus replicas
 
 /-- Finite crash-stop traces, used to build checked failover examples. -/

@@ -16,13 +16,9 @@ theorem first_not_last_response :
     firstFor 10 ordered = some (10, 1) := by decide
 
 theorem recovered_delivery_is_first_committed :
-    firstFor 1 Protocol.Tests.p16.core.log.flatten = some (1, 9) :=
+    firstFor 1 Protocol.Tests.p15.core.log.flatten = some (1, 9) :=
   first_committed_response (Protocol.reachable_refines Protocol.Tests.recovery_run)
     false (by decide)
-
-theorem one_core_arrival_needs_no_majority :
-    Protocol.GateReady Protocol.Tests.cfg Protocol.Tests.p1 1 :=
-  single_arrival_ready (by decide) (sender := false) (payload := 42) (by decide)
 
 /-- The retained-state recovery trace satisfies the paper-shaped contracts.
 It does not model loss of volatile state or handler reconstruction on recovery. -/
@@ -30,22 +26,13 @@ theorem paper_contracts_satisfiable :
     ∃ (tr : Nat → Protocol.Tests.S) (finish : Nat),
       Protocol.Behavior Protocol.Tests.cfg false tr ∧
       Protocol.StableLeader tr true finish ∧
-      (∃ sender payload, (sender, 1, payload) ∈ (tr finish).ballots) ∧
-      PendingHandlers Protocol.Tests.cfg tr true 1 ∧
+      Protocol.Received (tr finish) 1 ∧
+      PendingHandlers tr true 1 ∧
       Protocol.StableConsensusProgress tr true finish ∧
       ∀ r, DeliveryProgress (fun t => (tr t).core) r := by
   obtain ⟨tr, finish, b, stable, ready, handlers, consensus, delivery⟩ :=
     Protocol.Tests.retry_contracts_satisfiable
-  have arrival : ∃ sender payload, (sender, 1, payload) ∈ (tr finish).ballots := by
-    obtain ⟨payload, fallback, evidence, allowed⟩ := ready
-    cases fallback with
-    | false =>
-        obtain ⟨voters, _, enough, matching⟩ := evidence
-        cases voters with
-        | nil => simp [Protocol.Tests.cfg] at enough
-        | cons sender rest => exact ⟨sender, payload, matching sender (by simp)⟩
-    | true => exact False.elim (Bool.noConfusion (allowed rfl))
-  exact ⟨tr, finish, b, stable, arrival, .ofRetry handlers, consensus, delivery⟩
+  exact ⟨tr, finish, b, stable, ready, .ofRetry handlers, consensus, delivery⟩
 
 /-- A small regression for recovery that keeps a request marker but loses its
 unfinished handler. Repeated arrivals then stop at the duplicate check.

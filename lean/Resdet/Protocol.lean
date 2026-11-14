@@ -2,20 +2,15 @@ import Resdet.Safety
 
 /-!
 Protocol transitions above an abstract, append-only consensus log.
-Selections are shared across leaders. Crash/recovery changes availability,
-not recorded events or delivery state. Payloads justify selection but are
-not tracked through downstream execution.
+Arrival and forwarding are abstracted as a global received-request history,
+retained across leaders. Crash/recovery changes availability, not recorded
+events or delivery state. Request bodies are not tracked through execution.
 -/
 namespace Resdet.Protocol
 
 structure Config where
-  quorum : Nat
-  quorumPositive : 0 < quorum
   crashes : Bool := false
-  timeoutFallback : Bool := false
 
-abbrev Ballot (Node Request Payload : Type) := Node × Request × Payload
-abbrev Choice (Request Payload : Type) := Request × Payload × Bool
 abbrev Dispatch (Node Request : Type) := Node × Request × Option Node
 abbrev Execution (Node Request Response : Type) := Node × Request × Response
 
@@ -24,8 +19,7 @@ structure State (Node Request Payload Response : Type) where
   seen : Node → List Request
   leader : Option Node
   up : Node → Bool
-  ballots : List (Ballot Node Request Payload)
-  choices : List (Choice Request Payload)
+  requests : List (Item Request Payload)
   dispatches : List (Dispatch Node Request)
   executions : List (Execution Node Request Response)
   observed : List (Item Request Response)
@@ -35,17 +29,11 @@ variable {Node Request Payload Response : Type}
 variable [DecidableEq Node] [DecidableEq Request]
 
 def initial (leader : Node) : State Node Request Payload Response :=
-  ⟨Resdet.initial, fun _ => [], some leader, fun _ => true, [], [], [], [], [], []⟩
+  ⟨Resdet.initial, fun _ => [], some leader, fun _ => true, [], [], [], [], []⟩
 
-def Selected (s : State Node Request Payload Response) (request : Request) : Prop :=
-  ∃ payload fallback, (request, payload, fallback) ∈ s.choices
-
-/-- A finite certificate counts distinct matching callers, never duplicate votes. -/
-def Justified (q : Nat) (ballots : List (Ballot Node Request Payload))
-    (choice : Choice Request Payload) : Prop :=
-  if choice.2.2 then ∃ voter, (voter, choice.1, choice.2.1) ∈ ballots
-  else ∃ voters : List Node, voters.Nodup ∧ q ≤ voters.length ∧
-    ∀ voter ∈ voters, (voter, choice.1, choice.2.1) ∈ ballots
+/-- A nested invocation has arrived; network forwarding is abstracted away. -/
+def Received (s : State Node Request Payload Response) (request : Request) : Prop :=
+  ∃ payload, (request, payload) ∈ s.requests
 
 /-- Stored delivery-deduplication IDs match the observable delivery history. -/
 def DedupConsistent (s : State Node Request Payload Response) : Prop :=
@@ -64,17 +52,11 @@ def process (s : State Node Request Payload Response) (r : Node)
 
 inductive Step (cfg : Config) : State Node Request Payload Response →
     State Node Request Payload Response → Prop
-  | vote (s) (n request payload) (live : s.up n = true)
-      (fresh : ∀ p, (n, request, p) ∉ s.ballots) :
-      Step cfg s { s with ballots := (n, request, payload) :: s.ballots }
-  | select (s) (n request payload fallback)
-      (leader : s.leader = some n) (live : s.up n = true)
-      (fresh : ¬ Selected s request)
-      (evidence : Justified cfg.quorum s.ballots (request, payload, fallback))
-      (allowed : fallback = true → cfg.timeoutFallback = true) :
-      Step cfg s { s with choices := (request, payload, fallback) :: s.choices }
+  /-- Request arrivals, including retries, may repeat the same logical ID. -/
+  | receive (s) (request payload) :
+      Step cfg s { s with requests := (request, payload) :: s.requests }
   | dispatch (s) (n request) (leader : s.leader = some n) (live : s.up n = true)
-      (selected : Selected s request)
+      (received : Received s request)
       (fresh : ∀ l, (n, request, l) ∉ s.dispatches) :
       Step cfg s { s with dispatches := (n, request, s.leader) :: s.dispatches }
   | respond (s) (n request value)

@@ -1,8 +1,9 @@
 # Relation to the paper
 
 The Lean model proves safety and conditional liveness for Resdet above an
-abstract consensus log. It also models quorum selection, timeout fallback,
-and batching. This maps the arguments in Section 5 to theorem names for human
+abstract consensus log. A received invocation can proceed directly to leader
+dispatch. The log supports batches, with singleton batches representing basic
+Resdet entries. This maps the arguments in Section 5 to theorem names for human
 review; it is not a checked translation of the paper.
 
 ## Claims and checked statements
@@ -17,7 +18,7 @@ Names are in `Resdet.Paper` unless qualified otherwise.
 | A pending request eventually reaches agreement | `eventually_agreed` | Stable leader, ingress, pending-handler/retry fairness, and consensus progress. |
 | Every finite agreed prefix is eventually learned | `eventually_prefix_learned` | Eventual learning of each slot and retention of learned state. |
 | Prefix processing eventually delivers a response | `eventually_delivered` | Fair next-slot processing; suppression of duplicates leaves the first response. |
-| Every submitted request reaches every non-faulty replica | `theorem_2_crash_stop` | Quorum one, crash-stop failures, and the progress assumptions below. |
+| Every submitted request reaches every non-faulty replica | `theorem_2_crash_stop` | Crash-stop failures and the progress assumptions below. |
 | First agreed response wins, once per replica | `first_committed_response`; `Protocol.at_most_once_delivery` | Conflicting responses and duplicate log entries are allowed. |
 | Batching preserves delivery | `batching_equivalent`; `rebatching_preserves_delivery` | Entry order must be preserved. |
 | Applications observe the same race winner | `race_winner_for_group` | Both consume the common delivery order for the same set of request IDs. |
@@ -36,10 +37,11 @@ checks such a reachable trace.
   `StableConsensusProgress` supply stable leadership and eventual agreement of
   that leader's actual proposal attempts. Old leaders' buffered proposals need
   not commit.
-- **Ingress and handlers:** each submitted request eventually arrives;
-  `PendingHandlers` requires per-request selection, dispatch, response, and
-  proposal/reproposal progress while it remains unagreed. With quorum one,
-  `single_arrival_ready` turns one arrival into an eligible request.
+- **Ingress and handlers:** each submitted request eventually appears in the
+  global received-request history. `PendingHandlers` requires per-request
+  dispatch, response, and proposal/reproposal progress while it remains
+  unagreed. Forwarding and retry delivery to a particular leader are abstracted
+  away; the model does not verify those transport steps.
 - **Learning and processing:** `DeliveryProgress` requires eventual learning
   and fair processing of the next available slot. The whole-prefix and delivery
   conclusions are proved from these premises.

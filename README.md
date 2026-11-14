@@ -38,7 +38,8 @@ Start with the [reading guide](lean/README.md), then:
 
 ## Scope
 
-Consensus is an abstract append-only log. Liveness assumes ingress,
+Consensus is an abstract append-only log. A received request can proceed directly to leader dispatch.
+Liveness assumes ingress,
 handler/downstream progress, eventual stable leadership, consensus progress,
 and learning/processing progress. The main failure-model interface is
 crash-stop. The optional recovery action retains all state; it does not verify

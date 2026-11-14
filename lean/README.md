@@ -42,7 +42,7 @@ Start with the definitions and theorem statements, then read their proofs.
 | [Delivery.lean](Resdet/Delivery.lean) | Thin delivery wrappers around the shared helper, using either IDs from the delivery history or separately stored delivered IDs. |
 | [Model.lean](Resdet/Model.lean) | Four core actions: append, learn, process, stutter. The invariant connects each stored delivery history to a deduplicated log prefix. |
 | [Safety.lean](Resdet/Safety.lean) | Agreement and at-most-once delivery follow from that invariant. |
-| [Protocol.lean](Resdet/Protocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Selection, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
+| [Protocol.lean](Resdet/Protocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Request arrival, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
 | [Temporal.lean](Resdet/Temporal.lean), [ProtocolLiveness.lean](Resdet/ProtocolLiveness.lean), [ProposalRetry.lean](Resdet/ProposalRetry.lean) | Handler progress, stable-leader proposal attempts, and prefix processing yield delivery. |
 | [Paper.lean](Resdet/Paper.lean), [CrashStop.lean](Resdet/CrashStop.lean) | Agreement across different times and eventual permanent delivery to non-faulty replicas. |
 
@@ -71,7 +71,7 @@ progress interface are in [PROTOCOL.md](PROTOCOL.md).
 
 - [Tests.lean](Tests.lean): reordered learning, conflicting responses, batches,
   and examples showing why deduplication and prefix processing matter.
-- [ProtocolTests.lean](ProtocolTests.lean): selection certificates, failover,
+- [ProtocolTests.lean](ProtocolTests.lean): request arrival, authorized dispatch, failover,
   repeated physical execution, retained-state recovery, retries, and a stalled
   execution showing why liveness needs fairness.
 - [CrashStopTests.lean](CrashStopTests.lean): a failed leader stays down while

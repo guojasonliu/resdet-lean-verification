@@ -11,9 +11,6 @@ def Executed (s : State Node Request Payload Response) (n : Node) (request : Req
   ∃ value, (n, request, value) ∈ s.executions
 def Proposed (s : State Node Request Payload Response) (request : Request) :=
   ∃ value, (request, value) ∈ s.proposed
-def GateReady (cfg : Config) (s : State Node Request Payload Response) (request : Request) :=
-  ∃ payload fallback, Justified cfg.quorum s.ballots (request, payload, fallback) ∧
-    (fallback = true → cfg.timeoutFallback = true)
 
 structure Behavior (cfg : Config) (leader : Node)
     (tr : Nat → State Node Request Payload Response) : Prop where
@@ -34,15 +31,6 @@ theorem Behavior.core {cfg : Config} {leader : Node}
   · simp [b.init, initial]
   · intro t
     exact step_refines (reachable_dedup_consistent (b.reachable t)) (b.next t)
-
-theorem gate_step_mono {cfg : Config} {s t : State Node Request Payload Response}
-    (step : Step cfg s t) {request : Request} (h : GateReady cfg s request) :
-    GateReady cfg t request := by
-  obtain ⟨p, f, evidence, allowed⟩ := h
-  cases step with
-  | vote => exact ⟨p, f, justified_mono
-      (List.subset_cons_of_subset _ (fun _ h => h)) evidence, allowed⟩
-  | _ => exact ⟨p, f, evidence, allowed⟩
 
 theorem dispatched_step_mono {cfg : Config} {s t : State Node Request Payload Response}
     (step : Step cfg s t) {n : Node} {request : Request} (h : Dispatched s n request) :
@@ -67,24 +55,18 @@ theorem proposals_step_mono {cfg : Config} {s t : State Node Request Payload Res
   | repropose => exact List.subset_cons_of_subset _ (fun _ h => h)
   | _ => exact fun _ h => h
 
-def SelectEnabled (cfg : Config) (s : State Node Request Payload Response)
-    (n : Node) (request : Request) :=
-  s.leader = some n ∧ s.up n = true ∧ GateReady cfg s request ∧ ¬ Selected s request
 def DispatchEnabled (s : State Node Request Payload Response)
     (n : Node) (request : Request) :=
-  s.leader = some n ∧ s.up n = true ∧ Selected s request ∧ ¬ Dispatched s n request
+  s.leader = some n ∧ s.up n = true ∧ Received s request ∧ ¬ Dispatched s n request
 def RespondEnabled (s : State Node Request Payload Response) (n : Node) (request : Request) :=
   Dispatched s n request ∧ ¬ Executed s n request
 def ProposeEnabled (s : State Node Request Payload Response) (n : Node) (request : Request) :=
   s.leader = some n ∧ s.up n = true ∧ Executed s n request ∧ ¬ Proposed s request
 
-/-- Fairness of the three stages leading to external execution, for one request.
-Respond fairness represents the downstream completion contract. Occurrences
+/-- Per-request fairness of dispatch and downstream completion. Occurrences
 record the immediate effect of each stage. -/
-structure HandlerProgress (cfg : Config) (tr : Nat → State Node Request Payload Response)
+structure HandlerProgress (tr : Nat → State Node Request Payload Response)
     (n : Node) (request : Request) : Prop where
-  select : WeakFair (fun t => SelectEnabled cfg (tr t) n request)
-    (fun t => Selected (tr (t+1)) request)
   dispatch : WeakFair (fun t => DispatchEnabled (tr t) n request)
     (fun t => Dispatched (tr (t+1)) n request)
   respond : WeakFair (fun t => RespondEnabled (tr t) n request)
@@ -92,8 +74,8 @@ structure HandlerProgress (cfg : Config) (tr : Nat → State Node Request Payloa
 
 /-- Supplementary progress contract for the global-buffer consensus theorem.
 The stable-leader theorem uses explicit retries instead (see ProposalRetry). -/
-structure LocalProgress (cfg : Config) (tr : Nat → State Node Request Payload Response)
-    (n : Node) (request : Request) : Prop extends HandlerProgress cfg tr n request where
+structure LocalProgress (tr : Nat → State Node Request Payload Response)
+    (n : Node) (request : Request) : Prop extends HandlerProgress tr n request where
   propose : WeakFair (fun t => ProposeEnabled (tr t) n request)
     (fun t => Proposed (tr (t+1)) request)
 
@@ -105,32 +87,19 @@ def StableLeader (tr : Nat → State Node Request Payload Response) (n : Node) (
 theorem eventually_executed {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (start : Nat) (stable : StableLeader tr n start) (request : Request)
-    (receipt : GateReady cfg (tr start) request) (progress : HandlerProgress cfg tr n request) :
+    (receipt : Received (tr start) request) (progress : HandlerProgress tr n request) :
     EventuallyFrom start (fun t => Executed (tr t) n request) := by
-  have select : EventuallyFrom start (fun t => Selected (tr t) request) := by
-    apply fair_progress (p := fun t => GateReady cfg (tr t) request)
-      (enabled := fun t => SelectEnabled cfg (tr t) n request)
-      (occurs := fun t => Selected (tr (t+1)) request)
-    · intro a c hac hp
-      exact propagate (fun t ht => gate_step_mono (b.next t) ht) hac hp
-    · intro t ht hp hq
-      exact ⟨(stable t ht).1, (stable t ht).2, hp, hq⟩
-    · exact fun _ _ h => h
-    · exact progress.select
-    · exact receipt
-  obtain ⟨u, hu, selected⟩ := select
-  have dispatch : EventuallyFrom u (fun t => Dispatched (tr t) n request) := by
-    apply fair_progress (p := fun t => Selected (tr t) request)
+  have dispatch : EventuallyFrom start (fun t => Dispatched (tr t) n request) := by
+    apply fair_progress (p := fun t => Received (tr t) request)
       (enabled := fun t => DispatchEnabled (tr t) n request)
       (occurs := fun t => Dispatched (tr (t+1)) n request)
     · intro a c hac hp
-      exact propagate (fun t ht => step_selected_mono (b.next t) ht) hac hp
+      exact propagate (fun t ht => step_received_mono (b.next t) ht) hac hp
     · intro t ht hp hq
-      have leaderNow := stable t (Nat.le_trans hu ht)
-      exact ⟨leaderNow.1, leaderNow.2, hp, hq⟩
+      exact ⟨(stable t ht).1, (stable t ht).2, hp, hq⟩
     · exact fun _ _ h => h
     · exact progress.dispatch
-    · exact selected
+    · exact receipt
   obtain ⟨v, hv, dispatched⟩ := dispatch
   have respond : EventuallyFrom v (fun t => Executed (tr t) n request) := by
     apply fair_progress (p := fun t => Dispatched (tr t) n request)
@@ -148,7 +117,7 @@ theorem eventually_executed {cfg : Config} {leader n : Node}
 theorem eventually_proposed {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (start : Nat) (stable : StableLeader tr n start) (request : Request)
-    (receipt : GateReady cfg (tr start) request) (progress : LocalProgress cfg tr n request) :
+    (receipt : Received (tr start) request) (progress : LocalProgress tr n request) :
     EventuallyFrom start (fun t => Proposed (tr t) request) := by
   obtain ⟨w, hw, executed⟩ :=
     eventually_executed b start stable request receipt progress.toHandlerProgress
@@ -179,14 +148,14 @@ The primary stable-leader argument is in ProposalRetry and Paper. -/
 theorem eventual_delivery {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (stabilizes : Nat) (stable : StableLeader tr n stabilizes) (request : Request)
-    (ingress : EventuallyFrom 0 (fun t => GateReady cfg (tr t) request))
-    (localProgress : LocalProgress cfg tr n request) (consensus : ConsensusProgress tr)
+    (ingress : EventuallyFrom 0 (fun t => Received (tr t) request))
+    (localProgress : LocalProgress tr n request) (consensus : ConsensusProgress tr)
     (r : Node) (delivery : DeliveryProgress (fun t => (tr t).core) r) :
     EventuallyFrom 0 (fun t => ∃ value, (request, value) ∈ ((tr t).core.replica r).delivered) := by
   obtain ⟨received, _, ready⟩ := ingress
   let start := max stabilizes received
-  have readyNow : GateReady cfg (tr start) request :=
-    propagate (fun t ht => gate_step_mono (b.next t) ht) (Nat.le_max_right _ _) ready
+  have readyNow : Received (tr start) request :=
+    propagate (fun t ht => step_received_mono (b.next t) ht) (Nat.le_max_right _ _) ready
   have stableNow : StableLeader tr n start := fun t ht => stable t
     (Nat.le_trans (Nat.le_max_left _ _) ht)
   obtain ⟨p, _, value, proposed⟩ := eventually_proposed b start stableNow request readyNow localProgress
@@ -200,8 +169,8 @@ this does not mean exactly-once external execution. -/
 theorem eventual_exactly_once {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (stabilizes : Nat) (stable : StableLeader tr n stabilizes) (request : Request)
-    (ingress : EventuallyFrom 0 (fun t => GateReady cfg (tr t) request))
-    (localProgress : LocalProgress cfg tr n request) (consensus : ConsensusProgress tr)
+    (ingress : EventuallyFrom 0 (fun t => Received (tr t) request))
+    (localProgress : LocalProgress tr n request) (consensus : ConsensusProgress tr)
     (r : Node) (delivery : DeliveryProgress (fun t => (tr t).core) r) :
     EventuallyFrom 0 (fun t => (((tr t).core.replica r).delivered.map Prod.fst).count request = 1) := by
   obtain ⟨t, ht, value, hv⟩ := eventual_delivery b stabilizes stable request ingress

@@ -6,67 +6,15 @@ variable {Node Request Payload Response : Type}
 variable [DecidableEq Node] [DecidableEq Request]
 variable {cfg : Config} {leader : Node} {s t : State Node Request Payload Response}
 
-omit [DecidableEq Node] [DecidableEq Request] in
-theorem justified_mono {q : Nat} {a b : List (Ballot Node Request Payload)}
-    {choice : Choice Request Payload} (sub : a ⊆ b) (h : Justified q a choice) :
-    Justified q b choice := by
-  unfold Justified at h ⊢
-  split at h
-  · rename_i flag
-    rw [if_pos flag]
-    obtain ⟨v, hv⟩ := h
-    exact ⟨v, sub hv⟩
-  · rename_i flag
-    rw [if_neg flag]
-    obtain ⟨vs, hn, hq, hv⟩ := h
-    exact ⟨vs, hn, hq, fun v hm => sub (hv v hm)⟩
-
-theorem step_choices_mono (h : Step cfg s t) : s.choices ⊆ t.choices := by
+theorem step_requests_mono (h : Step cfg s t) : s.requests ⊆ t.requests := by
   cases h with
-  | select => exact List.subset_cons_of_subset _ (fun _ h => h)
+  | receive => exact List.subset_cons_of_subset _ (fun _ h => h)
   | _ => exact fun _ h => h
 
-theorem step_selected_mono (h : Step cfg s t) {request : Request}
-    (hs : Selected s request) : Selected t request := by
-  obtain ⟨p, f, hp⟩ := hs
-  exact ⟨p, f, step_choices_mono h hp⟩
-
-theorem selection_justified (h : Reachable cfg leader s) :
-    ∀ choice ∈ s.choices, Justified cfg.quorum s.ballots choice := by
-  induction h with
-  | init => simp [initial]
-  | step _ step ih =>
-      cases step with
-      | vote n request payload _ _ =>
-          intro c hc
-          exact justified_mono (List.subset_cons_of_subset _ (fun _ h => h)) (ih c hc)
-      | select n request payload fallback _ _ _ evidence _ =>
-          intro c hc
-          rcases List.mem_cons.mp hc with rfl | hc
-          · exact evidence
-          · exact ih c hc
-      | _ => exact ih
-
-theorem fallback_explicit (h : Reachable cfg leader s) :
-    ∀ choice ∈ s.choices, choice.2.2 = true → cfg.timeoutFallback = true := by
-  induction h with
-  | init => simp [initial]
-  | step _ step ih =>
-      cases step with
-      | select n request payload fallback _ _ _ _ allowed =>
-          intro c hc
-          rcases List.mem_cons.mp hc with rfl | hc
-          · exact allowed
-          · exact ih c hc
-      | _ => exact ih
-
-theorem strict_quorum (h : Reachable cfg leader s) (strict : cfg.timeoutFallback = false)
-    {choice : Choice Request Payload} (hc : choice ∈ s.choices) :
-    choice.2.2 = false ∧ Justified cfg.quorum s.ballots choice := by
-  constructor
-  · have := fallback_explicit h choice hc
-    cases he : choice.2.2 <;> simp_all
-  · exact selection_justified h choice hc
+theorem step_received_mono (h : Step cfg s t) {request : Request}
+    (hs : Received s request) : Received t request := by
+  obtain ⟨payload, member⟩ := hs
+  exact ⟨payload, step_requests_mono h member⟩
 
 /-- The event records the leader at dispatch time, not the current leader. -/
 theorem only_leader_dispatches (h : Reachable cfg leader s) :
@@ -82,20 +30,21 @@ theorem only_leader_dispatches (h : Reachable cfg leader s) :
           · exact ih d hd
       | _ => exact ih
 
-theorem no_dispatch_before_selection (h : Reachable cfg leader s) :
-    ∀ d ∈ s.dispatches, Selected s d.2.1 := by
+/-- Physical calls must correspond to a received logical invocation. -/
+theorem no_dispatch_before_receipt (h : Reachable cfg leader s) :
+    ∀ d ∈ s.dispatches, Received s d.2.1 := by
   induction h with
   | init => simp [initial]
   | step _ step ih =>
       cases step with
-      | select =>
+      | receive =>
           intro d hd
-          obtain ⟨p, f, hp⟩ := ih d hd
-          exact ⟨p, f, List.mem_cons_of_mem _ hp⟩
-      | dispatch n request _ _ selected _ =>
+          obtain ⟨payload, member⟩ := ih d hd
+          exact ⟨payload, List.mem_cons_of_mem _ member⟩
+      | dispatch n request _ _ received _ =>
           intro d hd
           rcases List.mem_cons.mp hd with rfl | hd
-          · exact selected
+          · exact received
           · exact ih d hd
       | _ => exact ih
 
@@ -220,16 +169,16 @@ theorem at_most_one_physical_dispatch (h : Reachable cfg leader s)
           exact fresh snapshot hd
       | _ => exact ih
 
-/-- Physical provenance and selection, in addition to core log validity. -/
+/-- Physical provenance and a received invocation, in addition to log validity. -/
 theorem response_validity (h : Reachable cfg leader s) (r : Node)
     {item : Item Request Response} (hi : item ∈ (s.core.replica r).delivered) :
-    item ∈ s.observed ∧ Selected s item.1 ∧
+    item ∈ s.observed ∧ Received s item.1 ∧
       ∃ n l, (n, item.1, item.2) ∈ s.executions ∧ (n, item.1, l) ∈ s.dispatches := by
   have observed := proposal_validity h (consensus_validity h
     (Resdet.delivered_in_log (reachable_refines h) r hi))
   obtain ⟨n, executed⟩ := observed_executed h item observed
   obtain ⟨l, dispatched⟩ := executions_dispatched h _ executed
-  exact ⟨observed, no_dispatch_before_selection h _ dispatched, n, l, executed, dispatched⟩
+  exact ⟨observed, no_dispatch_before_receipt h _ dispatched, n, l, executed, dispatched⟩
 
 theorem response_agreement (h : Reachable cfg leader s) (left right : Node)
     {request : Request} {a b : Response}
@@ -256,12 +205,9 @@ theorem applied_prefix_correct (h : Reachable cfg leader s) (r : Node) :
     (s.core.replica r).delivered = dedup (s.core.log.take (s.core.replica r).processed).flatten :=
   (Resdet.reachable_invariant (reachable_refines h)).appliedPrefixCorrect r
 
-/-- One exported bundle of the normal-protocol safety obligations. Properties
-which are false with fallback/failures retain their explicit mode conditions. -/
+/-- Resdet safety obligations. Unique physical dispatch requires crashes disabled. -/
 structure Safety (cfg : Config) (s : State Node Request Payload Response) : Prop where
-  selection : ∀ c ∈ s.choices, Justified cfg.quorum s.ballots c
-  fallback : ∀ c ∈ s.choices, c.2.2 = true → cfg.timeoutFallback = true
-  selectionBeforeDispatch : ∀ d ∈ s.dispatches, Selected s d.2.1
+  receiptBeforeDispatch : ∀ d ∈ s.dispatches, Received s d.2.1
   authorizedDispatch : ∀ d ∈ s.dispatches, d.2.2 = some d.1
   observedExecution : ∀ item ∈ s.observed, ∃ n, (n, item.1, item.2) ∈ s.executions
   executionDispatch : ∀ e ∈ s.executions, ∃ l, (e.1, e.2.1, l) ∈ s.dispatches
@@ -280,9 +226,7 @@ structure Safety (cfg : Config) (s : State Node Request Payload Response) : Prop
   noEarlyDelivery : ∀ r item, item ∈ (s.core.replica r).delivered → item ∈ s.core.log.flatten
 
 theorem all_safety (h : Reachable cfg leader s) : Safety cfg s :=
-  { selection := selection_justified h
-    fallback := fallback_explicit h
-    selectionBeforeDispatch := no_dispatch_before_selection h
+  { receiptBeforeDispatch := no_dispatch_before_receipt h
     authorizedDispatch := only_leader_dispatches h
     observedExecution := observed_executed h
     executionDispatch := executions_dispatched h

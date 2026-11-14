@@ -29,8 +29,8 @@ def StableConsensusProgress (tr : Nat → State Node Request Payload Response)
 
 /-- L3/L4 action-level progress including retries while a request is uncommitted.
 No field assumes that consensus agrees or that any replica delivers. -/
-structure RetryProgress (cfg : Config) (tr : Nat → State Node Request Payload Response)
-    (n : Node) (request : Request) : Prop extends HandlerProgress cfg tr n request where
+structure RetryProgress (tr : Nat → State Node Request Payload Response)
+    (n : Node) (request : Request) : Prop extends HandlerProgress tr n request where
   repropose : WeakFair (fun t => RetryEnabled (tr t) n request)
     (fun t => ∃ value, ProposalAttempt tr t n (request, value))
 
@@ -49,7 +49,7 @@ theorem retry_enabled_has_step {cfg : Config} {s : State Node Request Payload Re
 theorem eventually_agreed_stable_consensus {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (start : Nat) (stable : StableLeader tr n start) (request : Request)
-    (receipt : GateReady cfg (tr start) request) (progress : RetryProgress cfg tr n request)
+    (receipt : Received (tr start) request) (progress : RetryProgress tr n request)
     (consensus : StableConsensusProgress tr n start) :
     EventuallyFrom start (fun t => Agreed (tr t) request) := by
   obtain ⟨w, hw, executed⟩ :=
@@ -73,15 +73,15 @@ theorem eventually_agreed_stable_consensus {cfg : Config} {leader n : Node}
 theorem eventual_delivery_stable_consensus {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (stabilizes : Nat) (stable : StableLeader tr n stabilizes) (request : Request)
-    (ingress : EventuallyFrom 0 (fun t => GateReady cfg (tr t) request))
-    (progress : RetryProgress cfg tr n request)
+    (ingress : EventuallyFrom 0 (fun t => Received (tr t) request))
+    (progress : RetryProgress tr n request)
     (consensus : StableConsensusProgress tr n stabilizes)
     (r : Node) (delivery : DeliveryProgress (fun t => (tr t).core) r) :
     EventuallyFrom 0 (fun t => ∃ value, (request, value) ∈ ((tr t).core.replica r).delivered) := by
   obtain ⟨received, _, ready⟩ := ingress
   let start := max stabilizes received
-  have readyNow : GateReady cfg (tr start) request :=
-    propagate (fun t ht => gate_step_mono (b.next t) ht) (Nat.le_max_right _ _) ready
+  have readyNow : Received (tr start) request :=
+    propagate (fun t ht => step_received_mono (b.next t) ht) (Nat.le_max_right _ _) ready
   have stableNow : StableLeader tr n start := fun t ht => stable t
     (Nat.le_trans (Nat.le_max_left _ _) ht)
   have consensusNow : StableConsensusProgress tr n start := fun t ht => consensus t
@@ -94,8 +94,8 @@ theorem eventual_delivery_stable_consensus {cfg : Config} {leader n : Node}
 theorem exactly_once_stable_consensus {cfg : Config} {leader n : Node}
     {tr : Nat → State Node Request Payload Response} (b : Behavior cfg leader tr)
     (stabilizes : Nat) (stable : StableLeader tr n stabilizes) (request : Request)
-    (ingress : EventuallyFrom 0 (fun t => GateReady cfg (tr t) request))
-    (progress : RetryProgress cfg tr n request)
+    (ingress : EventuallyFrom 0 (fun t => Received (tr t) request))
+    (progress : RetryProgress tr n request)
     (consensus : StableConsensusProgress tr n stabilizes)
     (r : Node) (delivery : DeliveryProgress (fun t => (tr t).core) r) :
     EventuallyFrom 0 (fun t => (((tr t).core.replica r).delivered.map Prod.fst).count request = 1) := by
