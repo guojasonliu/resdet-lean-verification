@@ -1,0 +1,4 @@
+/lean/.lake/
+/tools/lean-*
+/tools/lean-download.*
+.DS_Store
