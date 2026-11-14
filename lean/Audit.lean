@@ -12,6 +12,9 @@ run_cmd do
   -- Public proof entry points and regression witnesses must be imported.
   -- Every Resdet declaration is audited below, not just this list.
   let required := #[
+    `Resdet.dedupFrom_append, `Resdet.dedupFrom_nodup,
+    `Resdet.dedupFrom_fresh, `Resdet.dedupFrom_covers,
+    `Resdet.applyWithDedup_correct,
     `Resdet.reachable_invariant, `Resdet.Protocol.reachable_refines,
     `Resdet.Protocol.all_safety,
     `Resdet.Paper.theorem_1_safety, `Resdet.Paper.theorem_2_liveness,
@@ -19,6 +22,7 @@ run_cmd do
     `Resdet.Paper.first_committed_response, `Resdet.Paper.rebatching_preserves_delivery,
     `Resdet.Tests.sample_reachable, `Resdet.Tests.skipped_prefix_unreachable,
     `Resdet.Tests.early_delivery_unreachable,
+    `Resdet.Tests.dedup_respects_seen, `Resdet.Tests.delivery_dedup_across_batches,
     `Resdet.Protocol.Tests.recovery_run, `Resdet.Protocol.Tests.invalid_double_counting,
     `Resdet.Protocol.Tests.pending_at_stabilization,
     `Resdet.Protocol.Tests.stable_leader_attempts_pending_request,

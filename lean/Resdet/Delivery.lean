@@ -1,131 +1,70 @@
-import Std
+import Resdet.Dedup
 
 /-!
-Incremental duplicate suppression and its reference specification.
-Only request IDs require decidable equality. Responses are arbitrary values.
+Delivery adapters for the shared request-ID deduplication helper.
+The core derives seen IDs from its output; the protocol stores them explicitly.
+Both use `dedupFrom` to select new responses, preserving their input order.
 -/
 namespace Resdet
 
-abbrev Item (Request Response : Type) := Request × Response
-
 variable {Request Response : Type} [DecidableEq Request]
 
-/-- An executable batch handler: append a response only if its ID is unseen.
-The core derives seen IDs from the delivery history; `CachedDelivery` relates
-an independently maintained cache to this handler. -/
-def applyItems : List (Item Request Response) → List (Item Request Response) →
-    List (Item Request Response)
-  | [], output => output
-  | item :: rest, output =>
-      if item.1 ∈ output.map Prod.fst then applyItems rest output
-      else applyItems rest (output ++ [item])
+/-- Extend a delivery history with the first response for each unseen ID. -/
+def applyItems (items output : List (Item Request Response)) : List (Item Request Response) :=
+  output ++ dedupFrom (output.map Prod.fst) items
 
-/-- Independent reference scan, retaining the first occurrence of each ID. -/
-def dedupFrom (seen : List Request) : List (Item Request Response) →
-    List (Item Request Response)
-  | [] => []
-  | item :: rest =>
-      if item.1 ∈ seen then dedupFrom seen rest
-      else item :: dedupFrom (seen ++ [item.1]) rest
+/-- Maintain the paper's delivery-deduplication state alongside the output history. -/
+def applyWithDedup (items : List (Item Request Response)) (seen : List Request)
+    (output : List (Item Request Response)) : List Request × List (Item Request Response) :=
+  let fresh := dedupFrom seen items
+  (seen ++ fresh.map Prod.fst, output ++ fresh)
 
-def dedup (items : List (Item Request Response)) := dedupFrom [] items
-
-theorem applyItems_eq_reference (items output : List (Item Request Response)) :
-    applyItems items output = output ++ dedupFrom (output.map Prod.fst) items := by
-  induction items generalizing output with
-  | nil => simp [applyItems, dedupFrom]
-  | cons item rest ih =>
-      simp only [applyItems, dedupFrom]
-      split
-      · exact ih output
-      · rw [ih]
-        simp [List.map_append, List.append_assoc]
+/-- The explicit deduplication state agrees with the history-derived adapter. -/
+theorem applyWithDedup_correct (items : List (Item Request Response)) (seen : List Request)
+    (output : List (Item Request Response)) (consistent : seen = output.map Prod.fst) :
+    applyWithDedup items seen output =
+      ((applyItems items output).map Prod.fst, applyItems items output) := by
+  subst seen
+  simp [applyWithDedup, applyItems, List.map_append]
 
 theorem dedup_eq_applyItems (items : List (Item Request Response)) :
     dedup items = applyItems items [] := by
-  simp [applyItems_eq_reference, dedup]
+  simp [applyItems, dedup]
 
+/-- Processing consecutive batches is equivalent to processing their concatenation. -/
 theorem applyItems_append (xs ys output : List (Item Request Response)) :
     applyItems (xs ++ ys) output = applyItems ys (applyItems xs output) := by
-  induction xs generalizing output with
-  | nil => rfl
-  | cons item rest ih =>
-      simp only [List.cons_append, applyItems]
-      split <;> apply ih
+  simp [applyItems, dedupFrom_append, List.map_append, List.append_assoc]
 
 theorem output_prefix_applyItems (items output : List (Item Request Response)) :
-    output <+: applyItems items output := by
-  rw [applyItems_eq_reference]
-  exact List.prefix_append _ _
-
-theorem dedup_prefix {xs ys : List (Item Request Response)} (h : xs <+: ys) :
-    dedup xs <+: dedup ys := by
-  obtain ⟨suffix, rfl⟩ := h
-  simp only [dedup_eq_applyItems, applyItems_append]
-  exact output_prefix_applyItems _ _
+    output <+: applyItems items output :=
+  List.prefix_append _ _
 
 theorem applyItems_nodup (items output : List (Item Request Response))
-    (h : (output.map Prod.fst).Nodup) :
+    (unique : (output.map Prod.fst).Nodup) :
     ((applyItems items output).map Prod.fst).Nodup := by
-  induction items generalizing output with
-  | nil => exact h
-  | cons item rest ih =>
-      simp only [applyItems]
-      split
-      · exact ih output h
-      · rename_i unseen
-        apply ih
-        simp only [List.map_append, List.map_cons, List.map_nil, List.nodup_append]
-        refine ⟨h, by simp, ?_⟩
-        intro a ha b hb hab
-        have hb' : b = item.1 := by simpa using hb
-        exact unseen ((hab.trans hb') ▸ ha)
-
-theorem dedup_nodup (items : List (Item Request Response)) :
-    ((dedup items).map Prod.fst).Nodup := by
-  rw [dedup_eq_applyItems]
-  exact applyItems_nodup items [] (by simp)
+  simp only [applyItems, List.map_append, List.nodup_append]
+  refine ⟨unique, dedupFrom_nodup _ _, ?_⟩
+  intro a ha b hb same
+  obtain ⟨item, member, id⟩ := List.mem_map.mp hb
+  have fresh := dedupFrom_fresh member
+  exact fresh (by simpa [id, same] using ha)
 
 theorem applyItems_mem {item : Item Request Response}
     (items output : List (Item Request Response))
-    (h : item ∈ applyItems items output) : item ∈ output ∨ item ∈ items := by
-  induction items generalizing output with
-  | nil => exact Or.inl h
-  | cons next rest ih =>
-      simp only [applyItems] at h
-      split at h
-      · rcases ih output h with h | h
-        · exact Or.inl h
-        · exact Or.inr (List.mem_cons_of_mem _ h)
-      · rcases ih (output ++ [next]) h with h | h
-        · simp only [List.mem_append, List.mem_singleton] at h
-          rcases h with h | h
-          · exact Or.inl h
-          · exact Or.inr (by simp [h])
-        · exact Or.inr (List.mem_cons_of_mem _ h)
+    (member : item ∈ applyItems items output) : item ∈ output ∨ item ∈ items := by
+  rcases List.mem_append.mp member with old | fresh
+  · exact Or.inl old
+  · exact Or.inr (dedupFrom_mem fresh)
 
-theorem dedup_mem {item : Item Request Response} {items : List (Item Request Response)}
-    (h : item ∈ dedup items) : item ∈ items := by
-  rw [dedup_eq_applyItems] at h
-  simpa using applyItems_mem items [] h
-
-omit [DecidableEq Request] in
-/-- Within an ID-unique history, equal IDs identify the same response item. -/
-theorem eq_of_same_id {items : List (Item Request Response)}
-    (unique : (items.map Prod.fst).Nodup)
-    {a b : Item Request Response} (ha : a ∈ items) (hb : b ∈ items)
-    (ids : a.1 = b.1) : a = b := by
-  induction items with
-  | nil => simp at ha
-  | cons first rest ih =>
-      simp only [List.map_cons, List.nodup_cons] at unique
-      simp only [List.mem_cons] at ha hb
-      rcases ha with rfl | ha
-      · rcases hb with rfl | hb
-        · rfl
-        · exact False.elim (unique.1 (ids ▸ List.mem_map_of_mem hb))
-      · rcases hb with rfl | hb
-        · exact False.elim (unique.1 (ids ▸ List.mem_map_of_mem ha))
-        · exact ih unique.2 ha hb
+/-- Every input ID is delivered, possibly using a response delivered earlier. -/
+theorem applyItems_covers (items output : List (Item Request Response)) :
+    ∀ request, request ∈ output.map Prod.fst ∨ request ∈ items.map Prod.fst →
+      request ∈ (applyItems items output).map Prod.fst := by
+  intro request member
+  simp only [applyItems, List.map_append, List.mem_append]
+  rcases member with old | incoming
+  · exact Or.inl old
+  · exact dedupFrom_covers _ _ request incoming
 
 end Resdet

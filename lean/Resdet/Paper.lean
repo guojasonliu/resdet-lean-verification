@@ -55,7 +55,7 @@ theorem batching_equivalent (batches : List (List (Item Request Response)))
     (output : List (Item Request Response)) :
     applyBatches batches output = applyItems batches.flatten output := by
   induction batches generalizing output with
-  | nil => rfl
+  | nil => simp [applyBatches, applyItems, dedupFrom]
   | cons batch rest ih =>
       simpa [applyBatches, List.flatten_cons, applyItems_append] using
         ih (applyItems batch output)

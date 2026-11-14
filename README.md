@@ -30,6 +30,7 @@ not run this audit.
 
 Start with the [reading guide](lean/README.md), then:
 
+- [Dedup.lean](lean/Resdet/Dedup.lean): shared duplicate suppression and its guarantees.
 - [Protocol.lean](lean/Resdet/Protocol.lean): state and allowed protocol actions.
 - [Model.lean](lean/Resdet/Model.lean): delivery core and its inductive invariant.
 - [Paper.lean](lean/Resdet/Paper.lean): theorem statements and liveness assumptions.

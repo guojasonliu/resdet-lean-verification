@@ -54,6 +54,17 @@ theorem duplicate_slot : applyItems batch0 (applyItems batch0 []) = [(1, 7), (2,
 
 theorem conflicting_response : dedup [(1, 7), (1, 999)] = [(1, 7)] := by decide
 
+/-- Previously delivered IDs are suppressed; a new ID keeps its first response. -/
+theorem dedup_respects_seen :
+    dedupFrom [2] [(2, 99), (1, 7), (1, 9), (3, 10), (2, 100)] =
+      [(1, 7), (3, 10)] := by decide
+
+/-- Both old and earlier-batch responses survive conflicting later duplicates. -/
+theorem delivery_dedup_across_batches :
+    let first := applyWithDedup batch0 [1] [(1, 5)]
+    applyWithDedup batch1 first.1 first.2 =
+      ([1, 2, 3], [(1, 5), (2, 8), (3, 10)]) := by decide
+
 -- Counterexamples to weakened handlers, deliberately NOT constructors of Step.
 def noDedupOutput : List (Item Nat Nat) := [] ++ [(1, 7), (1, 9)]
 

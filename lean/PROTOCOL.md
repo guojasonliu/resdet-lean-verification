@@ -8,7 +8,7 @@
 | --- | --- |
 | `core.log` | Shared append-only log of response batches. |
 | `core.replica` | Per-replica learned slots, processed prefix length, and delivered responses. |
-| `seen` | Independently maintained delivery-deduplication cache. |
+| `seen` | Request IDs whose responses have already been delivered. |
 | `leader`, `up` | Current leader and replica availability. |
 | `ballots`, `choices` | Received requests and globally selected payloads. |
 | `dispatches`, `executions` | Sender/request/leader snapshots and sender/request/response histories. |
@@ -24,13 +24,15 @@ unique dispatch; uniqueness is not a separate dispatch guard.
 The model abstracts several implementation details. Selection is global rather
 than per leader. Payloads justify selection but are not carried through
 dispatch/execution. Responses may be arbitrary. Crash/recovery retains all
-histories and caches; it is not a volatile-state restart model. See the
+histories and delivery-deduplication state; it is not a volatile-state restart model. See the
 [paper correspondence](PAPER.md#recovery-remains-a-model-gap).
 
 ## Safety proof
 
-1. `applyCached_correct` relates the cached handler to the core handler.
-2. `reachable_cache` proves `seen` always equals the delivered request IDs.
+1. Both delivery handlers use `dedupFrom` in `Dedup.lean`. Its guarantees cover
+   unique fresh IDs, provenance, coverage, and composition across batches.
+   `applyWithDedup_correct` relates explicit delivered-ID state to the core handler.
+2. `reachable_dedup_consistent` proves `seen` always equals the delivered request IDs.
 3. `step_refines` and `reachable_refines` project protocol executions to core
    executions, allowing core stuttering for protocol-only actions.
 4. The core invariant proves each delivered sequence is the deduplicated

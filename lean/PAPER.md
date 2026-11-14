@@ -61,7 +61,7 @@ The current paper's Section 4 permits replicas to recover. Section 5's
 mechanization discussion says recovered leaders clear volatile request
 deduplication so unfinished calls can execute again. Lean's `Step.recover`
 only changes availability: dispatch/execution histories, learned state, and
-delivery caches remain intact. Its recovery examples check a different
+delivery-deduplication state remain intact. Its recovery examples check a different
 abstraction.
 
 `CrashStopBehavior` excludes recovery, and its theorems establish the

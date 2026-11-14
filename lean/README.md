@@ -38,7 +38,8 @@ Start with the definitions and theorem statements, then read their proofs.
 
 | File | What to review |
 | --- | --- |
-| [Delivery.lean](Resdet/Delivery.lean) | Incremental duplicate suppression and an independent first-occurrence specification. |
+| [Dedup.lean](Resdet/Dedup.lean) | Shared first-occurrence scan and its uniqueness, coverage, and batch-composition guarantees. |
+| [Delivery.lean](Resdet/Delivery.lean) | Thin delivery wrappers around the shared helper, using either IDs from the delivery history or separately stored delivered IDs. |
 | [Model.lean](Resdet/Model.lean) | Four core actions: append, learn, process, stutter. The invariant connects each stored delivery history to a deduplicated log prefix. |
 | [Safety.lean](Resdet/Safety.lean) | Agreement and at-most-once delivery follow from that invariant. |
 | [Protocol.lean](Resdet/Protocol.lean), [ProtocolSafety.lean](Resdet/ProtocolSafety.lean) | Selection, dispatch, responses, retries, and failures; a proved projection to the core and response provenance. |
@@ -54,6 +55,12 @@ replica.delivered = dedup(flatten(log.take(replica.processed)))
 It is proved by induction over transitions, not assumed by the process rule.
 The log may contain conflicting responses for the same request ID. Processing
 in log order and keeping the first occurrence makes replicas agree.
+
+`dedupFrom seen items` is the single duplicate-suppression implementation.
+It returns the first item for each ID absent from `seen`. The delivery wrappers
+append those items to the history; the protocol wrapper also updates its
+delivered-ID state. Their consistency proof connects the explicit state to the
+history without introducing another deduplication algorithm.
 
 Liveness uses explicit assumptions about ingress, a stable live leader,
 handler/downstream progress, consensus, and learning. None directly asserts

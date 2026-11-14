@@ -1,4 +1,4 @@
-import Resdet.CachedDelivery
+import Resdet.Safety
 
 /-!
 Protocol transitions above an abstract, append-only consensus log.
@@ -47,12 +47,13 @@ def Justified (q : Nat) (ballots : List (Ballot Node Request Payload))
   else ∃ voters : List Node, voters.Nodup ∧ q ≤ voters.length ∧
     ∀ voter ∈ voters, (voter, choice.1, choice.2.1) ∈ ballots
 
-def CacheCoherent (s : State Node Request Payload Response) : Prop :=
+/-- Stored delivery-deduplication IDs match the observable delivery history. -/
+def DedupConsistent (s : State Node Request Payload Response) : Prop :=
   ∀ r, s.seen r = (s.core.replica r).delivered.map Prod.fst
 
 def process (s : State Node Request Payload Response) (r : Node)
     (batch : List (Item Request Response)) :=
-  let result := applyCached batch (s.seen r) (s.core.replica r).delivered
+  let result := applyWithDedup batch (s.seen r) (s.core.replica r).delivered
   let replicas := fun n =>
     if n = r then
       { s.core.replica n with processed := (s.core.replica n).processed + 1,
@@ -116,25 +117,25 @@ inductive Reachable (cfg : Config) (leader : Node) : State Node Request Payload 
   | init : Reachable cfg leader (initial leader)
   | step {s t} : Reachable cfg leader s → Step cfg s t → Reachable cfg leader t
 
-theorem process_core (s : State Node Request Payload Response) (h : CacheCoherent s)
+theorem process_core (s : State Node Request Payload Response) (h : DedupConsistent s)
     (r : Node) (batch : List (Item Request Response)) :
     (process s r batch).core = processBatch s.core r batch := by
-  simp only [process, applyCached_correct batch _ _ (h r), processBatch]
+  simp only [process, applyWithDedup_correct batch _ _ (h r), processBatch]
   congr 1
   funext n
   by_cases hn : n = r
   · subst n; simp
   · simp [hn]
 
-theorem step_cache {cfg : Config} {s t : State Node Request Payload Response}
-    (h : CacheCoherent s) (step : Step cfg s t) : CacheCoherent t := by
+theorem step_dedup_consistent {cfg : Config} {s t : State Node Request Payload Response}
+    (h : DedupConsistent s) (step : Step cfg s t) : DedupConsistent t := by
   cases step with
   | learn r slot _ _ =>
       intro n
       by_cases hn : n = r <;> simpa [learnSlot, hn] using h n
   | process r batch _ _ _ =>
       intro n
-      simp only [process, applyCached_correct batch _ _ (h r)]
+      simp only [process, applyWithDedup_correct batch _ _ (h r)]
       by_cases hn : n = r
       · subst n; simp
       · simpa [hn] using h n
@@ -142,7 +143,7 @@ theorem step_cache {cfg : Config} {s t : State Node Request Payload Response}
 
 /-- A proved forward simulation, not an assumed invariant in the full model. -/
 theorem step_refines {cfg : Config} {s t : State Node Request Payload Response}
-    (h : CacheCoherent s) (step : Step cfg s t) : Resdet.Step s.core t.core := by
+    (h : DedupConsistent s) (step : Step cfg s t) : Resdet.Step s.core t.core := by
   cases step with
   | decide batch _ => exact .append _ batch
   | learn r slot _ valid => exact .learn _ r slot valid
@@ -151,17 +152,17 @@ theorem step_refines {cfg : Config} {s t : State Node Request Payload Response}
       exact .process _ r batch learned entry
   | _ => exact .stutter _
 
-theorem reachable_cache {cfg : Config} {leader : Node} {s : State Node Request Payload Response}
-    (h : Reachable cfg leader s) : CacheCoherent s := by
+theorem reachable_dedup_consistent {cfg : Config} {leader : Node} {s : State Node Request Payload Response}
+    (h : Reachable cfg leader s) : DedupConsistent s := by
   induction h with
   | init => intro r; rfl
-  | step _ step ih => exact step_cache ih step
+  | step _ step ih => exact step_dedup_consistent ih step
 
 theorem reachable_refines {cfg : Config} {leader : Node}
     {s : State Node Request Payload Response} (h : Reachable cfg leader s) :
     Resdet.Reachable s.core := by
   induction h with
   | init => exact .init
-  | step reach step ih => exact .step ih (step_refines (reachable_cache reach) step)
+  | step reach step ih => exact .step ih (step_refines (reachable_dedup_consistent reach) step)
 
 end Resdet.Protocol
