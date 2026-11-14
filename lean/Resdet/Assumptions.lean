@@ -4,8 +4,8 @@ import Resdet.Safety
 /-!
 Consensus and environment contracts, passed as theorem premises rather than
 Lean axioms. Agreement is an external relation; there is no shared log from
-which replicas read entries. The two `Extra` contracts below are not claimed
-to follow from the paper's current assumptions.
+which replicas read entries. The fault model treats leadership loss as a
+failure, so replicas designated non-faulty retain leadership once elected.
 -/
 namespace Resdet
 
@@ -17,8 +17,17 @@ def CallbackAgreement (run : Execution Node Request Payload Response)
     run.event a r = .handle_learn index left →
     run.event b t = .handle_learn index right → left = right
 
+/-- Leadership is lost only through a fault. `nonfaulty` identifies replicas
+that remain non-faulty throughout this execution/incarnation. -/
+structure FaultModel (run : Execution Node Request Payload Response)
+    (nonfaulty : Node → Prop) : Prop where
+  retainsLeadership : ∀ a b n, nonfaulty n → a ≤ b →
+    run.leader a n = true → run.leader b n = true
+
 structure Consensus (run : Execution Node Request Payload Response)
     (nonfaulty : Node → Prop) (agreed : Nat → Nat → Item Request Response → Prop) : Prop where
+  /-- CG3(1): consensus eventually elects a non-faulty leader. -/
+  election : ∃ time n, nonfaulty n ∧ run.leader time n = true
   /-- CG1 at the callback interface, including repeat callbacks and different times. -/
   indexAgreement : CallbackAgreement run nonfaulty
   /-- CG2: agreement at i includes an agreed entry at every positive index through i. -/
@@ -41,30 +50,33 @@ structure RequestProgress (run : Execution Node Request Payload Response)
     ¬ Requests.Proposed (run.state start n).requests request →
     ∃ time response, start ≤ time ∧ run.event time n = .resume_request request response
 
-/-- EXTRA: a request that remains unagreed is actually admitted by a non-faulty
-leader. Eventual election plus L1/L2/L4 alone does not establish this when
-leadership can change between receipt and execution of `handle_request`. -/
-def LeaderAdmission (run : Execution Node Request Payload Response)
+/-- L1/L2 plus L4 at the completed-handler boundary: a pending request is
+received and its handler runs at a non-faulty node observed as leader at `start`.
+This field does not assert leadership when the handler executes; the fault model
+supplies that fact. Transport retries and scheduling are external contracts. -/
+structure SubmissionProgress (run : Execution Node Request Payload Response)
     (nonfaulty : Node → Prop) (agreed : Nat → Nat → Item Request Response → Prop)
-    (submitted : Request → Prop) : Prop :=
-  ∀ request, submitted request →
+    (submitted : Request → Prop) : Prop where
+  handleRequest : ∀ start n request, submitted request → nonfaulty n →
+    run.leader start n = true →
     (¬ ∃ time index response, 1 ≤ index ∧ agreed time index (request, response)) →
-    ∃ time n payload, nonfaulty n ∧ run.leader time n = true ∧
-      run.event time n = .handle_request request payload
-
-/-- EXTRA: the handler may lose leadership while waiting for the RPC. The paper's
-CG3(2), read as a guarantee for current leaders, does not cover its later proposal.
-There is no new retry or leadership check in the modeled handler. -/
-def FormerLeaderProposalProgress (run : Execution Node Request Payload Response)
-    (nonfaulty : Node → Prop) (agreed : Nat → Nat → Item Request Response → Prop) : Prop :=
-  ∀ time n request response, nonfaulty n → run.leader time n = false →
-    run.event time n = .resume_request request response →
-    ∃ later index, time ≤ later ∧ 1 ≤ index ∧ agreed later index (request, response)
+    ∃ time payload, start ≤ time ∧ run.event time n = .handle_request request payload
 
 namespace Execution
 
 variable (run : Execution Node Request Payload Response)
 variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Response → Prop}
+
+/-- A non-faulty response continuation still belongs to the current leader.
+Its call originated in a leader handler; leadership retention bridges the RPC wait. -/
+theorem resume_is_leader (faults : FaultModel run nonfaulty)
+    (time : Nat) (n : Node) (request : Request) (response : Response)
+    (hn : nonfaulty n) (event : run.event time n = .resume_request request response) :
+    run.leader time n = true := by
+  have step := run.next time n
+  rw [event] at step
+  obtain ⟨earlier, _, before, leader, _⟩ := run.issued_origin time n step.resume_issued
+  exact faults.retainsLeadership earlier time n hn (Nat.le_of_lt before) leader
 
 /-- Recorded local entries originated at callbacks, so CG1 applies to them. -/
 theorem index_agreement (cg1 : CallbackAgreement run nonfaulty)

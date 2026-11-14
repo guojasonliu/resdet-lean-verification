@@ -38,51 +38,47 @@ asserts eventual delivery of a request to service code.
 
 ## Assumptions that need author review
 
-### 1. A request needs an executing leader handler
+### 1. Leadership loss is a fault
 
-CG3(1) says that a nonfaulty leader is eventually elected. L1–L2 concern request
-and message receipt; L4 concerns eventual execution. Those statements do not
-alone ensure that a pending request's handler runs while its recipient is
-still leader. Every arrival or scheduled handler could finish after a change
-of leadership.
+`FaultModel.retainsLeadership` treats a replica that loses leadership as faulty.
+Accordingly, a replica classified as nonfaulty throughout the modeled
+incarnation retains leadership once elected. This is an explicit interpretation
+of the paper's fault model; it is not asserted as a property of every consensus
+implementation.
+The paper should state the relation between leadership loss and faults so that
+readers use the same meaning of nonfaulty.
 
-The formal liveness theorem explicitly requires a pending request to reach an
-executing handler at a nonfaulty current leader. This combines routing,
-retries, and scheduling into a stronger admission contract. It is not claimed
-to follow from CG3(1) and L1–L2 as currently written. Those election and transport
-properties are not independently formalized in this development. In particular, L2 promises
-delivery only when a message is repeatedly sent; it does not provide those
-repeated sends. The paper's service retry policy is prose outside the handler.
+`Consensus.election` (CG3(1)) supplies an eventual nonfaulty leader. Leadership
+retention then implies that this leader remains leader. Stability is a consequence of the election
+and fault-model contracts, rather than a separate permanent-stability premise.
 
-### 2. A response may return after its leader is demoted
+`SubmissionProgress.handleRequest` represents L1/L2/L4 at completed-handler
+boundaries:
+a request that stays pending eventually executes a request handler at an
+elected nonfaulty replica. It does not assert that the replica is still leader
+at that later event. `leader_admission` derives that fact from leadership
+retention.
+Transport, service retries, and scheduler internals remain abstract; these
+external guarantees are assumed rather than verified as implementations.
 
-The pseudocode checks leadership only before `send_and_recv`. Its continuation
-still proposes if leadership changes during the RPC. Printed CG3(2) guarantees
-agreement for entries proposed by a nonfaulty **leader**, which may exclude
-that continuation's proposal.
+### 2. A nonfaulty response continuation remains at the leader
 
-The formal liveness theorem separately requires consensus progress for these
-former-leader proposals. This strengthens the printed consensus contract; it
-is not an implementation of proposal retry or forwarding inside consensus.
-An alternative would be a protocol change that preserves and retries such
-proposals, or an explicit execution restriction ensuring leadership at the
-proposal. The Lean handlers do not silently add either behavior. No permanent
-stable-leader assumption is used.
+The request handler records an issued call only in its leader branch.
+`Execution.resume_is_leader` traces each response continuation to that earlier
+leader invocation. If the replica is nonfaulty, leadership retention means it
+is still leader when the RPC returns and the continuation proposes. CG3(2) therefore
+covers the proposal without a separate former-leader progress guarantee.
 
-A concrete problematic execution is:
+A faulty leader may lose leadership during its RPC. The pseudocode still has
+no leadership recheck before proposing, but the liveness proof does not require
+that faulty replica's proposal to succeed. A request that remains pending is
+handled by the eventual nonfaulty leader through the submission contract.
 
-1. A accepts a request as leader and starts its RPC.
-2. B becomes leader; A returns and proposes as a follower.
-3. B accepts the same request and starts its RPC.
-4. A becomes leader; B returns and proposes as a follower.
-5. Both replicas suppress future requests with that ID as duplicates.
-
-If consensus is permitted to ignore both follower proposals, there need never
-be an agreed response, even if A now remains leader forever. The finite
-handler prefix and the suppressed subsequent retries are kernel-checked in
-`Tests.both_proposals_after_demotion` and
-`Tests.later_leader_retries_suppressed`. Those finite examples do not claim to
-check all infinite liveness contracts.
+The finite two-node demotion example in `Tests.lean` still checks the handler
+behavior: both continuations can propose after demotion, and subsequent calls
+with the same ID are suppressed. Under the fault model, the demoted replicas
+cannot both be classified as nonfaulty. That schedule is not a counterexample
+to liveness under the intended assumptions.
 
 ### 3. Handler atomicity and nonfaulty state
 
@@ -94,8 +90,9 @@ the locking or scheduling implementation that supplies this behavior.
 
 The main proof tracks persistent state within a replica incarnation. A
 nonfaulty replica must preserve that state and satisfy the required progress
-contracts. Section 4 also permits recovery, while the pseudocode contains no
-reset or restoration procedure. The Lean theorem does not verify restoration
+contracts. A failed replica that later recovers is not automatically reclassified
+as nonfaulty within this same proof incarnation. Section 4 also permits recovery,
+while the pseudocode contains no reset or restoration procedure. The Lean theorem does not verify restoration
 of learned/delivered state, clearing volatile request deduplication, or retrying
 an interrupted RPC after restart.
 
@@ -111,9 +108,10 @@ CG1 is formalized at the callback interface, across times and replicas, and
 includes callbacks ignored as duplicates. The paper defines learning as
 recording an entry, so this makes an additional interface interpretation
 explicit: repeated callbacks for one index must carry the same entry. The
-formal liveness proof also uses CG1 to show that an ignored duplicate callback has already recorded the
-agreed entry. The paper's Theorem 2 lists only CG2–CG3 and L1–L4; its premise
-list should include this consensus-consistency dependency.
+formal liveness proof also uses CG1 to show that an ignored duplicate callback
+has already recorded the agreed entry. The paper's Theorem 2 lists only
+CG2–CG3 and L1–L4; its premise list should include this consensus-consistency
+dependency.
 
 For an agreed entry, learning progress supplies either an already-recorded
 matching entry or an eventual matching callback. This is not a proof that every

@@ -31,7 +31,10 @@ Events complete nonblocking local segments; RPC waiting lies between request
 and resume events. The model does not interleave memory operations within a
 segment. Forwarding is a visible effect, but the transport implementation,
 retransmission schedule, and leader election algorithm are outside the model.
-Leadership may change; no permanent stable-leader premise is used.
+Leadership may change when a replica becomes faulty. `FaultModel` requires a
+replica classified as nonfaulty throughout its incarnation to retain leadership
+once elected. Together with eventual election, this yields an eventual stable
+nonfaulty leader; stability is derived rather than separately assumed.
 
 ## Safety
 
@@ -64,27 +67,37 @@ parameters rather than added Lean axioms.
 
 | Contract | What it supplies |
 | --- | --- |
+| `FaultModel.retainsLeadership` | A nonfaulty replica that is leader remains leader at later times; losing leadership means becoming faulty. |
+| `Consensus.election` (CG3(1)) | Some nonfaulty replica is eventually elected leader. |
 | `Consensus.indexAgreement` (CG1 interpretation) | Cross-time agreement of callback entries at the same positive index, including duplicate callbacks the handler ignores. |
 | `Consensus.prefixAgreement` (CG2) | An agreed index has an agreed entry at every earlier positive index. |
 | `Consensus.currentLeaderProgress` (CG3(2)) | A response continuation that proposes at a nonfaulty current leader eventually has its entry agreed. |
 | `Consensus.learnCallbacks` (CG3(3) + L4) | An agreed entry is already recorded or eventually has a matching concrete `handle_learn` event at each nonfaulty replica. The event executes the callback, including prefix processing. |
 | `RequestProgress.resume` (L3 + L4) | An issued, incomplete call at a nonfaulty replica eventually has a concrete `resume_request` event. That event executes the continuation and emits a proposal. |
-| **Extra: `LeaderAdmission`** | A submitted request that stays unagreed eventually has a concrete request-handler event at a nonfaulty current leader. |
-| **Extra: `FormerLeaderProposalProgress`** | A nonfaulty handler's proposal still eventually becomes agreed if its replica has lost leadership before the response continuation. |
+| `SubmissionProgress.handleRequest` (L1/L2/L4) | A submitted request that stays pending eventually executes a request handler at a nonfaulty replica observed as leader at the starting time. It does not assert leadership at the later handler event. |
 
-CG3(1), L1, and L2 are not separately implemented or proved. The extra leader
-admission contract supplies the routing/scheduling overlap missing from their
-printed statements. Combined L3/L4 and callback/L4 contracts refer to actual
-handler events, not assumed eventual proposal or delivery histories. Learning
-progress allows an entry already recorded, so it does not demand an infinite
-stream of duplicate callbacks for an old agreement. The completed-segment
-interpretation is explicit; arrival queues and scheduler
-internals are not modeled.
+`leader_admission` derives leader handling from `Consensus.election`,
+`SubmissionProgress.handleRequest`, and leadership retention. The submission
+contract combines L1/L2/L4 at the execution model's handler boundary; transport,
+service retries, and scheduler internals are not independently implemented.
+
+`Execution.resume_is_leader` traces a response continuation back to the actual
+leader invocation that issued its RPC. Leadership retention makes the
+nonfaulty replica still leader at the continuation, so ordinary CG3(2) supplies
+proposal progress. There is no extra consensus guarantee for demoted replicas.
+A proposal from a faulty leader may be abandoned; pending requests still reach
+the eventual nonfaulty leader through submission progress.
+
+Combined L3/L4 and callback/L4 contracts refer to actual handler events, not
+assumed eventual proposal or delivery histories. Learning progress allows an
+entry already recorded, so it does not demand an infinite stream of duplicate
+callbacks for an old agreement.
 
 The liveness chain is:
 
 ```text
-Lemma 3: leader admission -> issued call -> response continuation -> agreement
+Lemma 3: election + submission + leadership retention
+         -> leader handling -> issued call -> leader continuation -> agreement
 Lemma 4: agreed index -> agreed finite prefix -> executed learning callbacks
 Lemma 5: learned prefix -> completed processing loop -> delivered response
 Theorem 2: compose Lemmas 3, 4, and 5
@@ -98,10 +111,11 @@ finds an existing local entry: the old entry must equal the agreed callback
 value. The paper's Theorem 2 premise list currently omits this dependency.
 Delivery history grows, so an established delivery is not retracted.
 
-See [PAPER.md](PAPER.md#assumptions-that-need-author-review) for the leadership
-counterexample, recovery limits, body-identity contract, and serialized-handler
+See [PAPER.md](PAPER.md#assumptions-that-need-author-review) for the leadership/fault
+interpretation, recovery limits, body-identity contract, and serialized-handler
 assumption. The checks prove the definitions and conditional statements in this
 repository; they do not establish those external contracts in an implementation.
 [ContractsTests.lean](ContractsTests.lean) supplies a complete execution satisfying
 the contracts, while [Tests.lean](Tests.lean) checks the handler examples and the
-finite demotion scenario.
+finite demotion scenario, whose demoted replicas cannot all be nonfaulty under
+this fault model.

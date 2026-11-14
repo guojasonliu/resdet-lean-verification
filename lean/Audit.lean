@@ -18,6 +18,8 @@ run_cmd do
     `Resdet.Requests.step_preserves_invariant,
     `Resdet.handle_learn_invariant, `Resdet.handle_learn_completed,
     `Resdet.Execution.invariant, `Resdet.Execution.completed,
+    `Resdet.Execution.issued_origin, `Resdet.Execution.resume_is_leader,
+    `Resdet.leader_admission,
     `Resdet.lemma_1_same_processed_entry, `Resdet.lemma_2_no_hole_processing,
     `Resdet.theorem_1_safety, `Resdet.theorem_1_on_execution,
     `Resdet.lemma_3_eventual_agreement, `Resdet.lemma_4_eventual_prefix_learning,
@@ -28,8 +30,9 @@ run_cmd do
     `Resdet.Tests.duplicate_request_does_not_reexecute,
     `Resdet.Tests.both_proposals_after_demotion,
     `Resdet.Tests.later_leader_retries_suppressed,
+    `Resdet.Tests.demotions_exclude_nonfaulty,
     `Resdet.ContractsTests.consensus_contract, `Resdet.ContractsTests.request_progress,
-    `Resdet.ContractsTests.leader_admission, `Resdet.ContractsTests.former_leader_progress,
+    `Resdet.ContractsTests.fault_model, `Resdet.ContractsTests.submission_progress,
     `Resdet.ContractsTests.concrete_delivery, `Resdet.ContractsTests.safety_instance,
     `Resdet.ContractsTests.liveness_instance]
   for name in required do

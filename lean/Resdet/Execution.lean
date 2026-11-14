@@ -117,6 +117,27 @@ theorem proposal_origin {leader : Bool} {event : Event Request Payload Response}
       · exact Or.inl old
   | _ => exact Or.inl member
 
+/-- An issued call was already present, or this step accepted it as leader. -/
+theorem issued_origin {leader : Bool} {event : Event Request Payload Response}
+    {s t : Replica Request Payload Response} (h : Step leader event s t)
+    {request : Request} (issued : Requests.Issued t.requests request) :
+    Requests.Issued s.requests request ∨
+      leader = true ∧ ∃ payload, event = .handle_request request payload := by
+  cases h with
+  | @handle_request s invoked payload =>
+      rcases Requests.handle_request_issued_origin _ _ invoked payload request issued with old | ⟨lead, same⟩
+      · exact Or.inl old
+      · subst request
+        exact Or.inr ⟨lead, payload, rfl⟩
+  | _ => exact Or.inl issued
+
+theorem resume_issued {s t : Replica Request Payload Response}
+    {leader : Bool} {request : Request} {response : Response}
+    (h : Step leader (.resume_request request response) s t) :
+    Requests.Issued s.requests request := by
+  cases h
+  assumption
+
 theorem request_issued {s t : Replica Request Payload Response}
     {request : Request} {payload : Payload}
     (h : Step true (.handle_request request payload) s t) :
@@ -186,6 +207,19 @@ theorem proposal_origin (time : Nat) (n : Node) {item : Item Request Response}
       · obtain ⟨earlier, before, origin⟩ := ih old
         exact ⟨earlier, by omega, origin⟩
       · exact ⟨time, Nat.lt_succ_self _, event⟩
+
+/-- Request deduplication remembers an invocation that actually ran as leader. -/
+theorem issued_origin (time : Nat) (n : Node) {request : Request}
+    (issued : Requests.Issued (run.state time n).requests request) :
+    ∃ earlier payload, earlier < time ∧ run.leader earlier n = true ∧
+      run.event earlier n = .handle_request request payload := by
+  induction time with
+  | zero => simp [run.initial, Requests.Issued] at issued
+  | succ time ih =>
+      rcases (run.next time n).issued_origin issued with old | ⟨leader, payload, event⟩
+      · obtain ⟨earlier, payload, before, leader, event⟩ := ih old
+        exact ⟨earlier, payload, by omega, leader, event⟩
+      · exact ⟨time, payload, Nat.lt_succ_self _, leader, event⟩
 
 theorem request_event_issued (time : Nat) (n : Node) (request : Request) (payload : Payload)
     (leader : run.leader time n = true)

@@ -6,28 +6,43 @@ variable {Node Request Payload Response : Type} [DecidableEq Request]
 variable (run : Execution Node Request Payload Response)
 variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Response → Prop}
 
-/-- The actual proposal event may occur before or after the handler loses leadership. -/
-theorem proposal_event_eventually_agreed (consensus : Consensus run nonfaulty agreed)
-    (former : FormerLeaderProposalProgress run nonfaulty agreed)
+/-- CG3(1), request submission/handling progress, and the fault model together
+put a pending invocation in the leader branch of `handle_request`. -/
+theorem leader_admission (faults : FaultModel run nonfaulty)
+    (consensus : Consensus run nonfaulty agreed) {submitted : Request → Prop}
+    (submissions : SubmissionProgress run nonfaulty agreed submitted)
+    (request : Request) (submittedRequest : submitted request)
+    (pending : ¬ ∃ time index response, 1 ≤ index ∧ agreed time index (request, response)) :
+    ∃ time n payload, nonfaulty n ∧ run.leader time n = true ∧
+      run.event time n = .handle_request request payload := by
+  obtain ⟨start, n, hn, leader⟩ := consensus.election
+  obtain ⟨time, payload, afterStart, event⟩ :=
+    submissions.handleRequest start n request submittedRequest hn leader pending
+  exact ⟨time, n, payload, hn, faults.retainsLeadership start time n hn afterStart leader, event⟩
+
+/-- A non-faulty handler retains leadership through its RPC, so CG3(2) applies. -/
+theorem proposal_event_eventually_agreed (faults : FaultModel run nonfaulty)
+    (consensus : Consensus run nonfaulty agreed)
     (time : Nat) (n : Node) (request : Request) (response : Response)
     (hn : nonfaulty n) (event : run.event time n = .resume_request request response) :
-    ∃ later index, time ≤ later ∧ 1 ≤ index ∧ agreed later index (request, response) := by
-  cases leader : run.leader time n with
-  | false => exact former time n request response hn leader event
-  | true => exact consensus.currentLeaderProgress time n request response hn leader event
+    ∃ later index, time ≤ later ∧ 1 ≤ index ∧ agreed later index (request, response) :=
+  consensus.currentLeaderProgress time n request response hn
+    (run.resume_is_leader faults time n request response hn event) event
 
-/-- Lemma 3: admission and completion of the paper's request handler produce an
-actual proposal. The two extra scheduling/consensus premises are explicit. -/
-theorem lemma_3_eventual_agreement (consensus : Consensus run nonfaulty agreed)
+/-- Lemma 3: CG3(1) and L1/L2/L4 yield leader handling; L3/L4 yields its
+response continuation, and CG3(2) yields agreement. Leadership retention is the
+fault-model rule, rather than an extra promise to agree former-leader proposals. -/
+theorem lemma_3_eventual_agreement (faults : FaultModel run nonfaulty)
+    (consensus : Consensus run nonfaulty agreed)
+    {submitted : Request → Prop} (submissions : SubmissionProgress run nonfaulty agreed submitted)
     (handlers : RequestProgress run nonfaulty)
-    {submitted : Request → Prop} (admission : LeaderAdmission run nonfaulty agreed submitted)
-    (former : FormerLeaderProposalProgress run nonfaulty agreed)
     (request : Request) (submittedRequest : submitted request) :
     ∃ time index response, 1 ≤ index ∧ agreed time index (request, response) := by
   classical
   by_cases done : ∃ time index response, 1 ≤ index ∧ agreed time index (request, response)
   · exact done
-  obtain ⟨time, n, payload, hn, leader, event⟩ := admission request submittedRequest done
+  obtain ⟨time, n, payload, hn, leader, event⟩ :=
+    leader_admission run faults consensus submissions request submittedRequest done
   have issued := run.request_event_issued time n request payload leader event
   by_cases proposed : Requests.Proposed (run.state (time + 1) n).requests request
   · obtain ⟨⟨rid, response⟩, member, same⟩ := List.mem_map.mp proposed
@@ -35,11 +50,11 @@ theorem lemma_3_eventual_agreement (consensus : Consensus run nonfaulty agreed)
     subst rid
     obtain ⟨earlier, _, resume⟩ := run.proposal_origin (time + 1) n member
     obtain ⟨later, index, _, positive, committed⟩ :=
-      proposal_event_eventually_agreed run consensus former earlier n request response hn resume
+      proposal_event_eventually_agreed run faults consensus earlier n request response hn resume
     exact ⟨later, index, response, positive, committed⟩
   · obtain ⟨resumeTime, response, _, resume⟩ := handlers.resume (time + 1) n request hn issued proposed
     obtain ⟨later, index, _, positive, committed⟩ :=
-      proposal_event_eventually_agreed run consensus former resumeTime n request response hn resume
+      proposal_event_eventually_agreed run faults consensus resumeTime n request response hn resume
     exact ⟨later, index, response, positive, committed⟩
 
 /-- A callback already recorded need not be invoked again. Otherwise its actual
@@ -98,18 +113,18 @@ theorem lemma_5_on_execution (time : Nat) (n : Node) (index : Nat)
   lemma_5_eventual_delivery (run.invariant time n) (run.completed time n) positive prefixPresent recorded
 
 /-- Theorem 2: the three numbered liveness lemmas compose into eventual delivery.
-Unlike the paper's current statement, CG1 and the two extra contracts are visible
-premises; see the assumption-gap report for their interpretation. -/
-theorem theorem_2_liveness (consensus : Consensus run nonfaulty agreed)
-    (handlers : RequestProgress run nonfaulty)
-    {submitted : Request → Prop} (admission : LeaderAdmission run nonfaulty agreed submitted)
-    (former : FormerLeaderProposalProgress run nonfaulty agreed) :
+The fault model makes the leadership interpretation explicit. CG1 is also used
+when a callback finds an already-recorded entry; see the paper correspondence. -/
+theorem theorem_2_liveness (faults : FaultModel run nonfaulty)
+    (consensus : Consensus run nonfaulty agreed)
+    {submitted : Request → Prop} (submissions : SubmissionProgress run nonfaulty agreed submitted)
+    (handlers : RequestProgress run nonfaulty) :
     ∀ request, submitted request → ∀ n, nonfaulty n →
       EventuallyFrom 0 (fun time => ∃ response,
         (request, response) ∈ (run.state time n).delivery.delivered) := by
   intro request submittedRequest n hn
   obtain ⟨agreedTime, index, response, positive, committed⟩ :=
-    lemma_3_eventual_agreement run consensus handlers admission former request submittedRequest
+    lemma_3_eventual_agreement run faults consensus submissions handlers request submittedRequest
   obtain ⟨learnedTime, _, prefixPresent, recorded⟩ :=
     lemma_4_eventual_prefix_learning run consensus agreedTime index (request, response) positive committed n hn
   obtain ⟨delivered, member⟩ :=

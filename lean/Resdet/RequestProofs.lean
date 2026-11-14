@@ -20,6 +20,20 @@ theorem handle_request_issued (s : State Request Payload Response)
   · simp [handle_request, Issued, old]
   · simp [handle_request, Issued, old, send_and_recv]
 
+/-- A new issued call can only come from the leader branch of this invocation. -/
+theorem handle_request_issued_origin (s : State Request Payload Response)
+    (isLeader : Bool) (request : Request) (payload : Payload) (query : Request)
+    (issued : Issued (handle_request isLeader request payload s) query) :
+    Issued s query ∨ isLeader = true ∧ query = request := by
+  cases isLeader with
+  | false => exact Or.inl (by simpa [handle_request, Issued, forward] using issued)
+  | true =>
+      by_cases old : request ∈ s.calls.map Prod.fst
+      · exact Or.inl (by simpa [handle_request, Issued, old] using issued)
+      · have member : query = request ∨ query ∈ s.calls.map Prod.fst := by
+          simpa [handle_request, Issued, old, send_and_recv] using issued
+        exact member.elim (fun same => Or.inr ⟨rfl, same⟩) Or.inl
+
 omit [DecidableEq Request] in
 /-- The duplicate branch refers to a real earlier invocation and its body. -/
 theorem issued_has_call {s : State Request Payload Response} {request : Request}

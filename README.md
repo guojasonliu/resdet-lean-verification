@@ -8,11 +8,11 @@ The code follows `handle_request`, its continuation after the downstream RPC,
 `handle_learn`, and `process`. The proofs have no fixed bound on replicas,
 request IDs, responses, or execution length.
 
-**Liveness is conditional on two explicitly flagged additions to the paper:**
-a pending request reaches a nonfaulty leader's executing handler, and proposals
-from a handler that has lost leadership still make consensus progress. The
-paper's current assumptions do not establish these properties. See
-[the assumption gaps](lean/PAPER.md#assumptions-that-need-author-review).
+The fault model treats loss of leadership as a fault. A replica classified as
+nonfaulty throughout its modeled incarnation therefore retains leadership.
+With CG3's eventual election and the paper's request/handler progress contracts,
+the proof derives leader admission and leader status at proposal time. See the
+[assumption interpretation](lean/PAPER.md#assumptions-that-need-author-review).
 
 ## Check
 

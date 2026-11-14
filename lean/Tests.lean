@@ -1,10 +1,10 @@
-import Resdet.Safety
+import Resdet.Assumptions
 import Resdet.RequestProofs
 
 /-!
 Kernel-checked examples of the paper's handlers. These complement the general
-proofs. The demotion example checks a finite request-handler execution; it does
-not claim to establish the paper's complete infinite liveness assumptions.
+proofs. The demotion example checks a finite request-handler execution. Its
+leaders cannot both be nonfaulty under the fault model used in the liveness proof.
 -/
 namespace Resdet.Tests
 
@@ -57,7 +57,8 @@ def accepted : RequestState := Requests.handle_request true 1 42 {}
 theorem duplicate_request_does_not_reexecute :
     Requests.handle_request true 1 42 accepted = accepted := by decide
 
-/-- `false` names A and `true` names B; both replicas remain available. -/
+/-- `false` names A and `true` names B. These are handler snapshots, not a
+claim that either demoted node remains nonfaulty. -/
 structure TwoNodes where
   leader : Bool := false
   a : RequestState := {}
@@ -90,10 +91,31 @@ theorem both_proposals_after_demotion :
 
 /-- Neither replica retries its completed call when it next handles rid as leader.
 If consensus drops the follower proposals, request deduplication alone cannot
-produce another proposal. No consensus or infinite execution is asserted here. -/
+produce another proposal. This schedule is outside the nonfaulty-leader case. -/
 theorem later_leader_retries_suppressed :
     Requests.handle_request true 1 42 c6.a = c6.a ∧
       Requests.handle_request true 1 42 c6.b = c6.b ∧
       c6.a.calls = [(1, 42)] ∧ c6.b.calls = [(1, 42)] := by decide
+
+/-- Under the clarified fault model, the two observed demotions exclude both
+nodes from the nonfaulty set. The handler snapshots are not a counterexample
+to liveness for nonfaulty replicas. -/
+theorem demotions_exclude_nonfaulty
+    (run : Execution Bool Nat Nat Nat) (nonfaulty : Bool → Prop)
+    (faults : FaultModel run nonfaulty)
+    (aLeader : run.leader 0 false = true)
+    (aDemoted : run.leader 1 false = false)
+    (bLeader : run.leader 1 true = true)
+    (bDemoted : run.leader 2 true = false) :
+    ¬ nonfaulty false ∧ ¬ nonfaulty true := by
+  constructor
+  · intro hn
+    have retained := faults.retainsLeadership 0 1 false hn (by decide) aLeader
+    rw [aDemoted] at retained
+    contradiction
+  · intro hn
+    have retained := faults.retainsLeadership 1 2 true hn (by decide) bLeader
+    rw [bDemoted] at retained
+    contradiction
 
 end Resdet.Tests
