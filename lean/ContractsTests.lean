@@ -1,165 +1,130 @@
-import Resdet.Liveness
+import Resdet
 
 /-!
-A concrete infinite execution witnesses that the external contracts can hold
-together: one actual invocation, one downstream response/proposal, then learning
-and delivery. Later request retries are deduplicated and preserve the completed state.
+A non-faulty replica loses leadership during its first RPC. Its response 7 is
+proposed but never agreed. The same replica is elected again, retries the same
+request, proposes response 9, and learns that entry at index 1.
 -/
 namespace Resdet.ContractsTests
 
 def s0 : Replica Nat Nat Nat := {}
-def s1 : Replica Nat Nat Nat :=
-  { s0 with requests := Requests.handle_request true 1 42 s0.requests }
-def s2 : Replica Nat Nat Nat :=
-  { s1 with requests := Requests.resume_request 1 7 s1.requests }
-def s3 : Replica Nat Nat Nat :=
-  { s2 with delivery := handle_learn s2.delivery 1 (1, 7) }
+def s1 := { s0 with requests := Requests.handle_request true 1 42 s0.requests }
+def s2 := { s1 with requests := Requests.resume_request 0 1 7 s1.requests }
+def s3 := { s2 with requests := Requests.handle_request true 1 42 s2.requests }
+def s4 := { s3 with requests := Requests.resume_request 1 1 9 s3.requests }
+def s5 := { s4 with delivery := handle_learn s4.delivery 1 (1, 9) }
 
 def state : Nat → Unit → Replica Nat Nat Nat
   | 0, _ => s0
   | 1, _ => s1
   | 2, _ => s2
-  | _ + 3, _ => s3
+  | 3, _ => s3
+  | 4, _ => s4
+  | _ + 5, _ => s5
 
 def event : Nat → Unit → Event Nat Nat Nat
   | 0, _ => .handle_request 1 42
-  | 1, _ => .resume_request 1 7
-  | 2, _ => .handle_learn 1 (1, 7)
-  | _ + 3, _ => .handle_request 1 42
+  | 1, _ => .resume_request 0 1 7
+  | 2, _ => .handle_request 1 42
+  | 3, _ => .resume_request 1 1 9
+  | 4, _ => .handle_learn 1 (1, 9)
+  | _ + 5, _ => .idle
 
 def run : Execution Unit Nat Nat Nat where
   state := state
-  leader := fun _ _ => true
+  leader := fun time _ => time != 1
   event := event
   initial := fun _ => rfl
   next := by
     intro time node
-    cases time with
-    | zero => exact .handle_request s0 1 42
-    | succ time =>
-        cases time with
-        | zero =>
-            exact .resume_request s1 1 7 (by exact List.mem_cons_self)
-              (by change ¬ (1 : Nat) ∈ ([] : List Nat); simp)
-        | succ time =>
-            cases time with
-            | zero => exact .handle_learn s2 1 (1, 7)
-            | succ time => exact .handle_request s3 1 42
-
-theorem concrete_delivery :
-    (run.state 3 ()).delivery.delivered = [(1, 7)] ∧
-    (run.state 3 ()).delivery.seen = [1] ∧
-    (run.state 3 ()).requests.calls = [(1, 42)] ∧
-    (run.state 3 ()).requests.proposals = [(1, 7)] := by decide
-
-def agreed (time index : Nat) (entry : Item Nat Nat) : Prop :=
-  2 ≤ time ∧ index = 1 ∧ entry = (1, 7)
+    match time with
+    | 0 => exact .handle_request s0 1 42
+    | 1 => exact .resume_request s1 0 1 7 (by decide)
+    | 2 => exact .handle_request s2 1 42
+    | 3 => exact .resume_request s3 1 1 9 (by decide)
+    | 4 => exact .handle_learn s4 1 (1, 9)
+    | _ + 5 => exact .idle s5
 
 def nonfaulty (_ : Unit) : Prop := True
 def submitted (request : Nat) : Prop := request = 1
 
-theorem recurring_request (time : Nat) :
-    run.event (time + 3) () = .handle_request 1 42 := rfl
+def agreed (time index : Nat) (entry : Item Nat Nat) : Prop :=
+  4 ≤ time ∧ index = 1 ∧ entry = (1, 9)
 
-theorem only_resume (time : Nat) (node : Unit) (request response : Nat)
-    (h : run.event time node = .resume_request request response) :
-    time = 1 ∧ request = 1 ∧ response = 7 := by
-  cases time with
-  | zero => simp [run, event] at h
-  | succ time =>
-      cases time with
-      | zero => simpa [run, event] using h.symm
-      | succ time =>
-          cases time <;> simp [run, event] at h
+theorem concrete_delivery :
+    (run.state 5 ()).requests.calls = [(1, 42), (1, 42)] ∧
+    (run.state 5 ()).requests.proposals = [(1, 9), (1, 7)] ∧
+    (run.state 5 ()).delivery.delivered = [(1, 9)] := by decide
+
+theorem first_proposal_can_be_lost :
+    run.leader 1 () = false ∧ run.event 1 () = .resume_request 0 1 7 ∧
+    ∀ time index, ¬agreed time index (1, 7) := by simp [run, event, agreed]
 
 theorem only_learn (time : Nat) (node : Unit) (index : Nat) (entry : Item Nat Nat)
     (h : run.event time node = .handle_learn index entry) :
-    index = 1 ∧ entry = (1, 7) := by
-  cases time with
-  | zero => simp [run, event] at h
-  | succ time =>
-      cases time with
-      | zero => simp [run, event] at h
-      | succ time =>
-          cases time with
-          | zero => simpa [run, event] using h.symm
-          | succ time => simp [run, event] at h
+    index = 1 ∧ entry = (1, 9) := by
+  match time with
+  | 0 | 1 | 2 | 3 | _ + 5 => simp [run, event] at h
+  | 4 => simpa [run, event] using h.symm
 
-theorem issued_id (time : Nat) (node : Unit) (request : Nat)
-    (issued : Requests.Issued (run.state time node).requests request) :
-    request = 1 ∧ 1 ≤ time := by
-  cases time with
-  | zero => change request ∈ ([] : List Nat) at issued; simp at issued
-  | succ time =>
-      cases time with
-      | zero => exact ⟨List.mem_singleton.mp issued, by decide⟩
-      | succ time =>
-          cases time with
-          | zero => exact ⟨List.mem_singleton.mp issued, by decide⟩
-          | succ time => exact ⟨List.mem_singleton.mp issued, by omega⟩
+theorem proposed_request (time : Nat) (node : Unit) (attempt request response : Nat)
+    (h : run.event time node = .resume_request attempt request response) :
+    request = 1 := by
+  match time with
+  | 0 | 2 | 4 | _ + 5 => simp [run, event] at h
+  | 1 | 3 =>
+    simp [run, event] at h
+    exact h.2.1.symm
 
-theorem proposed_after (time : Nat) (node : Unit) (later : 2 ≤ time) :
-    Requests.Proposed (run.state time node).requests 1 := by
-  cases time with
-  | zero => omega
-  | succ time =>
-      cases time with
-      | zero => omega
-      | succ time =>
-          cases time with
-          | zero => exact List.mem_cons_self
-          | succ time => exact List.mem_cons_self
-
-theorem consensus_contract : Consensus run nonfaulty agreed := by
-  constructor
-  · exact ⟨0, (), trivial, rfl⟩
-  · intro a b r t index left right _ _ _ hl hr
-    exact (only_learn a r index left hl).2.trans (only_learn b t index right hr).2.symm
-  · intro time index entry h earlier positive before
+theorem consensus_contract : Consensus run nonfaulty agreed where
+  election := ⟨0, (), trivial, rfl⟩
+  agreedEntryUnique := by
+    intro a b index left right _ hl hr
+    exact hl.2.2.trans hr.2.2.symm
+  callbackOrigin := by
+    intro time node index entry _ _ occurs
+    match time with
+    | 0 | 1 | 2 | 3 | _ + 5 => simp [run, event] at occurs
+    | 4 =>
+      obtain ⟨rfl, rfl⟩ := only_learn 4 node index entry occurs
+      exact ⟨4, by decide, by decide, rfl, rfl⟩
+  prefixAgreement := by
+    intro time index entry h earlier positive before
     rcases h with ⟨after, rfl, rfl⟩
-    have same : earlier = 1 := by omega
-    exact ⟨(1, 7), after, same, rfl⟩
-  · intro time node request response _ _ occurs
-    rcases only_resume time node request response occurs with ⟨rfl, rfl, rfl⟩
-    exact ⟨2, 1, by decide, by decide, by decide, rfl, rfl⟩
-  · intro start index entry _ h node _
+    exact ⟨(1, 9), after, by omega, rfl⟩
+  repeatedProposalProgress := by
+    intro request recurring
+    obtain ⟨time, n, attempt, response, _, occurs⟩ := recurring 0
+    obtain rfl := proposed_request time n attempt request response occurs
+    exact ⟨3, (), 1, 9, 4, 1, rfl, by decide, by decide, by decide, rfl, rfl⟩
+  learnCallbacks := by
+    intro start index entry _ h node _
     rcases h with ⟨after, rfl, rfl⟩
-    cases node
-    cases start with
-    | zero => omega
-    | succ start =>
-        cases start with
-        | zero => omega
-        | succ start =>
-            cases start with
-            | zero => exact Or.inr ⟨2, Nat.le_refl _, rfl⟩
-            | succ start => exact Or.inl rfl
+    match start with
+    | 0 | 1 | 2 | 3 => omega
+    | 4 => exact Or.inr ⟨4, Nat.le_refl _, rfl⟩
+    | _ + 5 => exact Or.inl rfl
 
-theorem request_progress : RequestProgress run nonfaulty := by
-  constructor
-  intro start node request _ issued pending
-  obtain ⟨rfl, positive⟩ := issued_id start node request issued
-  have before : start < 2 := by
-    by_cases later : 2 ≤ start
-    · exact False.elim (pending (proposed_after start node later))
-    · omega
-  have same : start = 1 := by omega
-  subst start
-  exact ⟨1, 7, Nat.le_refl _, rfl⟩
+theorem request_progress : RequestProgress run nonfaulty where
+  resume := by
+    intro start node attempt request _ pending
+    match start with
+    | 0 | 2 | 4 | _ + 5 => change _ ∈ ([] : List (Nat × Nat)) at pending; simp at pending
+    | 1 =>
+      have eq : (attempt, request) = (0, 1) := List.mem_singleton.mp pending
+      cases eq
+      exact ⟨1, 7, by decide, rfl⟩
+    | 3 =>
+      have eq : (attempt, request) = (1, 1) := List.mem_singleton.mp pending
+      cases eq
+      exact ⟨3, 9, by decide, rfl⟩
 
-theorem fault_model : FaultModel run nonfaulty := by
-  constructor
-  intro a b node _ _ _
-  rfl
-
-/-- Submission progress is witnessed by real retries, even after completion. -/
-theorem submission_progress : SubmissionProgress run nonfaulty agreed submitted := by
-  constructor
-  intro start node request hs _ _ _
-  change request = 1 at hs
-  subst request
-  cases node
-  exact ⟨start + 3, 42, by omega, recurring_request start⟩
+theorem submission_progress : SubmissionProgress run nonfaulty agreed submitted where
+  accept := by
+    intro cutoff request hs neverAgreed
+    change request = 1 at hs
+    subst request
+    exact False.elim (neverAgreed ⟨4, 1, 9, by decide, by decide, rfl, rfl⟩)
 
 theorem safety_instance {a b : Nat} {x y : Nat}
     (hx : (1, x) ∈ (run.state a ()).delivery.delivered)
@@ -169,7 +134,6 @@ theorem safety_instance {a b : Nat} {x y : Nat}
 theorem liveness_instance :
     EventuallyFrom 0 (fun time => ∃ response, (1, response) ∈
       (run.state time ()).delivery.delivered) :=
-  theorem_2_liveness run fault_model consensus_contract submission_progress
-    request_progress 1 rfl () trivial
+  theorem_2_liveness run consensus_contract submission_progress request_progress 1 rfl () trivial
 
 end Resdet.ContractsTests

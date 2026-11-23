@@ -8,11 +8,10 @@ The code follows `handle_request`, its continuation after the downstream RPC,
 `handle_learn`, and `process`. The proofs have no fixed bound on replicas,
 request IDs, responses, or execution length.
 
-The fault model treats loss of leadership as a fault. A replica classified as
-nonfaulty throughout its modeled incarnation therefore retains leadership.
-With CG3's eventual election and the paper's request/handler progress contracts,
-the proof derives leader admission and leader status at proposal time. See the
-[assumption interpretation](lean/PAPER.md#assumptions-that-need-author-review).
+Each retry can propose its own response, even if the replica loses leadership
+during the downstream call. Under CG3(2), if proposals keep arriving for a
+request ID, consensus eventually agrees on one of them. Each replica delivers
+the response at the first agreed index for that ID.
 
 ## Check
 
@@ -33,10 +32,11 @@ Warnings are errors. The audit permits only `propext`, `Quot.sound`, and
 
 ## Review
 
-Start with [Protocol.lean](lean/Resdet/Protocol.lean), then
-[Assumptions.lean](lean/Resdet/Assumptions.lean),
-[Safety.lean](lean/Resdet/Safety.lean), and
-[Liveness.lean](lean/Resdet/Liveness.lean).
+Start with the [Resdet pseudocode](lean/Resdet/resdet.lean), then read the
+[consensus guarantees](lean/Resdet/consensus_assumptions.lean) and
+[liveness assumptions](lean/Resdet/liveness_assumptions.lean).
+The [safety proofs](lean/Resdet/safety.lean) and
+[liveness proofs](lean/Resdet/liveness.lean) follow the paper’s lemma numbering.
 
 The [reading guide](lean/README.md) explains the supporting files.
 [Paper correspondence](lean/PAPER.md) maps the numbered statements and records

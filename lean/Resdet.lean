@@ -1,2 +1,1 @@
-import Resdet.Assumptions
-import Resdet.Liveness
+import Resdet.liveness
