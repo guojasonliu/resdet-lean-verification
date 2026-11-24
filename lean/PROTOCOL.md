@@ -66,9 +66,9 @@ returns, and by L4 its handler proposes that response. CG3(2) then gives
 agreement on one such proposal, contradicting the supposition.
 
 For Lemma 4, CG2 gives the agreed prefix. By CG3(3), each non-faulty replica
-receives the callback for each entry. By L4, each handler completes. Its
-slot then contains the agreed entry, including when an earlier callback
-already wrote it under the Section 4.1 interface.
+receives the callback for each entry. By L4, each handler completes with
+the agreed entry in its slot. Since learned entries persist, the whole
+prefix is eventually present at that replica.
 
 For Lemma 5, processing a complete prefix either delivers the response at the
 specified index or has already delivered a response for its request ID from an
