@@ -32,10 +32,10 @@ external effects. The request handler is split at the blocking RPC; its response
 continuation does not recheck leadership. Learning and processing use each
 replica's own log, with one-based indices.
 
-`calls`, `forwarded`, and `proposals` record external effects. `pending` represents
-handlers waiting for an RPC response. The model numbers these invocations locally
-to distinguish concurrent retries for the same request. Consensus sees only the
-request ID and response. `history` records processed entries for the proofs.
+`calls`, `forwarded`, and `proposals` record external effects. An RPC stays in
+`pending` until its response arrives, then in `returned` until the handler resumes.
+Locally numbered attempts distinguish concurrent retries for the same request.
+Consensus sees only the request ID and response. `history` records processed entries.
 -/
 
 namespace Resdet.Requests
@@ -45,6 +45,7 @@ structure State (Request Payload Response : Type) where
   forwarded : List (Request × Payload) := []
   proposals : List (Item Request Response) := []
   pending : List (Nat × Request) := []
+  returned : List (Nat × Request × Response) := []
   deriving DecidableEq
 
 variable {Request Payload Response : Type} [DecidableEq Request]
@@ -66,9 +67,14 @@ def handle_request (isLeader : Bool) (request : Request) (payload : Payload)
   if !isLeader then forward request payload s
   else send_and_recv request payload s
 
+def rpc_return (attempt : Nat) (request : Request) (response : Response)
+    (s : State Request Payload Response) :=
+  { s with pending := s.pending.erase (attempt, request)
+           returned := (attempt, request, response) :: s.returned }
+
 def resume_request (attempt : Nat) (request : Request) (response : Response)
     (s : State Request Payload Response) :=
-  propose (request, response) { s with pending := s.pending.erase (attempt, request) }
+  propose (request, response) { s with returned := s.returned.filter (·.1 != attempt) }
 
 end Resdet.Requests
 
@@ -130,7 +136,9 @@ structure Replica (Request Payload Response : Type) where
   delivery : LocalState Request Response := initialLocal
 
 inductive Event (Request Payload Response : Type)
+  | submit_request (request : Request) (payload : Payload)
   | handle_request (request : Request) (payload : Payload)
+  | rpc_return (attempt : Nat) (request : Request) (response : Response)
   | resume_request (attempt : Nat) (request : Request) (response : Response)
   | receive_learn (index : Nat) (entry : Item Request Response)
   | handle_learn (receivedAt index : Nat) (entry : Item Request Response)
@@ -139,15 +147,20 @@ inductive Event (Request Payload Response : Type)
 
 variable {Node Request Payload Response : Type} [DecidableEq Request]
 
-/-- Receipt of a learn callback leaves the protocol state unchanged. When its
-handler executes, it updates the log and runs the processing loop. -/
+/-- Submission is an observation at the service. An RPC return enables its
+matching continuation; a learn receipt precedes the callback's local update. -/
 inductive Step (isLeader : Bool) : Event Request Payload Response →
     Replica Request Payload Response → Replica Request Payload Response → Prop
+  | submit_request (s) (request payload) : Step isLeader (.submit_request request payload) s s
   | handle_request (s) (request payload) :
       Step isLeader (.handle_request request payload) s
         { s with requests := Requests.handle_request isLeader request payload s.requests }
-  | resume_request (s) (attempt : Nat) (request response)
+  | rpc_return (s) (attempt : Nat) (request response)
       (pending : (attempt, request) ∈ s.requests.pending) :
+      Step isLeader (.rpc_return attempt request response) s
+        { s with requests := Requests.rpc_return attempt request response s.requests }
+  | resume_request (s) (attempt : Nat) (request response)
+      (returned : (attempt, request, response) ∈ s.requests.returned) :
       Step isLeader (.resume_request attempt request response) s
         { s with requests := Requests.resume_request attempt request response s.requests }
   | receive_learn (s) (index entry) : Step isLeader (.receive_learn index entry) s s
@@ -156,10 +169,17 @@ inductive Step (isLeader : Bool) : Event Request Payload Response →
         { s with delivery := handle_learn s.delivery index entry }
   | idle (s) : Step isLeader .idle s s
 
+/-- Network observations for L2, indexed by time, sender, recipient, and message. -/
+structure NetworkTrace (Node : Type) where
+  Message : Type
+  sent : Nat → Node → Node → Message → Prop
+  received : Nat → Node → Node → Message → Prop
+
 structure Execution (Node Request Payload Response : Type) [DecidableEq Request] where
   state : Nat → Node → Replica Request Payload Response
   leader : Nat → Node → Bool
   event : Nat → Node → Event Request Payload Response
+  network : NetworkTrace Node
   initial : ∀ n, state 0 n = {}
   next : ∀ time n, Step (leader time n) (event time n) (state time n) (state (time + 1) n)
   /-- A completed learn handler refers to its own earlier invocation. -/

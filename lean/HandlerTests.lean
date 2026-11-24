@@ -53,8 +53,10 @@ theorem nonleader_forwards_payload :
 def accepted : RequestState := Requests.handle_request true 1 42 {}
 
 def retried := Requests.handle_request true 1 42 accepted
-def secondReturnsFirst := Requests.resume_request 1 1 9 retried
-def bothReturned := Requests.resume_request 0 1 7 secondReturnsFirst
+def secondReturned := Requests.rpc_return 1 1 9 retried
+def secondResumed := Requests.resume_request 1 1 9 secondReturned
+def firstReturned := Requests.rpc_return 0 1 7 secondResumed
+def bothResumed := Requests.resume_request 0 1 7 firstReturned
 
 /-- The same leader issues two physical calls for rid 1. -/
 theorem retry_issues_another_call :
@@ -63,7 +65,16 @@ theorem retry_issues_another_call :
 
 /-- Completing the retry leaves the original RPC in flight. Both may propose. -/
 theorem overlapping_retries_complete_independently :
-    secondReturnsFirst.pending = [(0, 1)] ∧ bothReturned.pending = [] ∧
-    bothReturned.proposals = [(1, 7), (1, 9)] := by decide
+    secondReturned.pending = [(0, 1)] ∧ secondReturned.returned = [(1, 1, 9)] ∧
+    secondReturned.proposals = [] ∧ secondResumed.returned = [] ∧
+    bothResumed.pending = [] ∧ bothResumed.returned = [] ∧
+    bothResumed.proposals = [(1, 7), (1, 9)] := by decide
+
+/-- A continuation cannot substitute another response or consume the same return twice. -/
+theorem resume_requires_its_return (next : Resdet.Replica Nat Nat Nat) :
+    ¬ Step false (.resume_request 1 1 7) { requests := secondReturned } next ∧
+    ¬ Step false (.resume_request 1 1 9) { requests := secondResumed } next := by
+  constructor <;> intro h <;> cases h with
+  | resume_request _ _ _ _ ready => revert ready; decide
 
 end Resdet.HandlerTests

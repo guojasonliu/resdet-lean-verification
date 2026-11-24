@@ -1,10 +1,10 @@
 # Correspondence with the paper
 
 Read [resdet.lean](Resdet/resdet.lean) alongside the Section 4 pseudocode.
-The blocking `send_and_recv` is split into a call and its response
-continuation. The number assigned to each call lets Lean distinguish
-overlapping RPCs for the same logical request. Delivery uses the request ID
-alone, just as in the pseudocode.
+The blocking `send_and_recv` has three observable steps. The leader issues the
+RPC, the RPC returns a response (L3), and the handler resumes with that response
+and proposes it (L4). A local call number distinguishes overlapping RPCs for the
+same logical request. Delivery uses the request ID alone.
 
 ## Numbered proofs
 
@@ -25,7 +25,8 @@ each numbered statement quantifies over the relevant requests and replicas.
 
 ## Scope and assumptions
 
-- **Submissions.** The `submitted` predicate denotes logical request IDs submitted during an execution. The model abstracts over the time of the first service submission, individual transport messages, and leader election. L1 constrains acceptance of retries that stay pending. Different attempts may be accepted by different leaders.
+- **Submissions.** A `submit_request` event identifies when service code submits a request. If the request stays pending, L1 supplies repeated submissions and acceptances by non-faulty leaders. Different leaders may accept different attempts.
+- **Network.** L2 states fair delivery for a message repeatedly sent between non-faulty components. Lemma 3 uses leader acceptance directly from L1, as in the paper.
 - **Consensus.** CG1 assumes index agreement on the replicas’ learned entries. Section 4.1 also specifies that each callback carries the entry committed at its index. Lemma 4 uses that interface when a duplicate finds an occupied slot. CG3(3) guarantees receipt of the callback, and L4 guarantees completion of its handler.
 - **Request identity.** The paper requires retries of one logical request to reuse its ID and body. The model carries the payload with each call and forwarding operation. It does not verify ID generation, payload consistency, or exactly-once effects at the downstream service.
 - **Section 5.4.** The paper’s TLA⁺ mechanization describes an earlier model with request deduplication and a leader that remains in place. The Lean results cover the revised Section 4 pseudocode and the proofs in Sections 5.1–5.3. Neither artifact checks a translation of the other.

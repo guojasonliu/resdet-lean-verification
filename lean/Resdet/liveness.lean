@@ -6,33 +6,51 @@ namespace Resdet
 
 variable {Node Request Payload Response : Type} [DecidableEq Request]
 
-/-- A handler that passes the leader check starts its own RPC. -/
-theorem Step.accepted_rpc_pending {s t : Replica Request Payload Response}
-    {request : Request} {payload : Payload} (step : Step true (.handle_request request payload) s t) :
-    (s.requests.calls.length, request) ∈ t.requests.pending := by
-  cases step
-  exact List.mem_cons_self
-
 variable (run : Execution Node Request Payload Response)
 variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Response → Prop}
 
-/-- Lemma 3. In the absence of agreement, each retry starts an RPC (L1) and
-eventually proposes a response (L3/L4). CG3(2) then gives agreement for this ID. -/
+/-- A delivered response came from a processed log entry and its consensus callback. -/
+theorem Execution.delivered_was_agreed (consensus : Consensus run nonfaulty agreed)
+    (time : Nat) (n : Node) (healthy : nonfaulty n) {entry : Item Request Response}
+    (delivered : entry ∈ (run.state time n).delivery.delivered) :
+    ∃ agreedAt index, 1 ≤ index ∧ agreed agreedAt index entry := by
+  have inv := run.invariant time n
+  rw [inv.delivery] at delivered
+  obtain ⟨k, inside, found⟩ := List.getElem_of_mem (dedup_mem delivered)
+  have recorded : (run.state time n).delivery.log (k + 1) = some entry := by
+    rw [← inv.historyLog k (inv.historyLength ▸ inside), List.getElem?_eq_getElem inside, found]
+  obtain ⟨completedAt, receivedAt, _, completed⟩ := run.log_origin time n recorded
+  have receipt := (run.learnInvoked completedAt n receivedAt (k + 1) entry completed).2
+  obtain ⟨agreedAt, _, committed⟩ :=
+    consensus.callbackOrigin receivedAt n (k + 1) entry healthy (by omega) receipt
+  exact ⟨agreedAt, k + 1, by omega, committed⟩
+
+/-- Lemma 3. While the request remains pending, a non-faulty leader repeatedly
+accepts it (L1). Each RPC returns (L3), and its handler proposes the response
+(L4). CG3(2) gives agreement for one such proposal. -/
 theorem lemma_3_eventual_agreement (consensus : Consensus run nonfaulty agreed)
-    {submitted : Request → Prop} (liveness : LivenessAssumptions run nonfaulty agreed submitted)
-    (request : Request) (submittedRequest : submitted request) :
+    (liveness : LivenessAssumptions run nonfaulty)
+    (request : Request) (submittedRequest : Submitted run request) :
     ∃ time index response, 1 ≤ index ∧ agreed time index (request, response) := by
   apply Classical.byContradiction
   intro neverAgreed
+  have stillPending : ∀ time n response, nonfaulty n →
+      (request, response) ∉ (run.state time n).delivery.delivered := by
+    intro time n response healthy delivered
+    obtain ⟨agreedAt, index, positive, committed⟩ :=
+      run.delivered_was_agreed consensus time n healthy delivered
+    exact neverAgreed ⟨agreedAt, index, response, positive, committed⟩
   have repeated : RepeatedProposals run request := by
     intro cutoff
-    obtain ⟨time, n, payload, afterCutoff, healthy, leader, accepted⟩ :=
-      liveness.requestAccepted cutoff request submittedRequest neverAgreed
-    have step := run.next time n
-    rw [leader, accepted] at step
-    obtain ⟨later, response, afterCall, resumed⟩ :=
-      liveness.rpcCompletes (time + 1) n _ request healthy step.accepted_rpc_pending
-    exact ⟨later, n, _, response, by omega, resumed⟩
+    obtain ⟨sentAt, _, payload, acceptedAt, n, afterCutoff, _, afterSend, healthy, leader, accepted⟩ :=
+      liveness.l1 cutoff request submittedRequest stillPending
+    obtain ⟨returnedAt, response, afterCall, returned⟩ :=
+      liveness.l3 acceptedAt n request payload healthy leader accepted
+    let attempt := (run.state acceptedAt n).requests.calls.length
+    obtain ⟨proposedAt, afterReturn, proposed⟩ :=
+      liveness.l4 returnedAt n (.resume_request attempt request response) healthy
+        (by simp only [returned, completionOf, attempt])
+    exact ⟨proposedAt, n, attempt, response, by omega, proposed⟩
   obtain ⟨_, _, _, response, time, index, _, _, positive, agreedEntry⟩ :=
     consensus.repeatedProposalProgress request repeated
   exact neverAgreed ⟨time, index, response, positive, agreedEntry⟩
@@ -121,7 +139,8 @@ theorem agreed_eventually_recorded (consensus : Consensus run nonfaulty agreed)
     (committed : agreed start index entry) (n : Node) (hn : nonfaulty n) :
     EventuallyFrom start (fun time => (run.state time n).delivery.log index = some entry) := by
   obtain ⟨_, _, receivedAt, _, receipt⟩ := consensus.cg3_3 start index entry positive committed n hn
-  obtain ⟨time, _, completion⟩ := l4 receivedAt n index entry hn receipt
+  obtain ⟨time, _, completion⟩ :=
+    l4 receivedAt n (.handle_learn receivedAt index entry) hn (by simp only [receipt, completionOf])
   have recorded := run.learn_event_recorded consensus time n hn index entry positive committed completion
   exact ⟨max start (time + 1), Nat.le_max_left _ _, run.log_mono n (Nat.le_max_right _ _) recorded⟩
 
@@ -321,8 +340,8 @@ theorem lemma_5_on_execution (time : Nat) (n : Node) (index : Nat)
 /-- Theorem 2: the three numbered liveness lemmas compose into eventual delivery.
 Each learned slot retains the committed entry supplied by the consensus callback. -/
 theorem theorem_2_liveness (consensus : Consensus run nonfaulty agreed)
-    {submitted : Request → Prop} (liveness : LivenessAssumptions run nonfaulty agreed submitted) :
-    ∀ request, submitted request → ∀ n, nonfaulty n →
+    (liveness : LivenessAssumptions run nonfaulty) :
+    ∀ request, Submitted run request → ∀ n, nonfaulty n →
       EventuallyFrom 0 (fun time => ∃ response,
         (request, response) ∈ (run.state time n).delivery.delivered) := by
   intro request submittedRequest n hn

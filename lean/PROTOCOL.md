@@ -6,12 +6,12 @@ Each replica has its own request handlers and learned log. An execution records
 the state, leadership observation, and handler event for each replica at each
 natural-number time. [Protocol definitions](Resdet/resdet.lean)
 
-1. A nonleader forwards the request ID and payload. A leader accepts the
-   invocation and issues an RPC, including when it has seen that ID before.
-2. The RPC can return after leadership changes. Its continuation proposes the
-   pair of request ID and response to consensus. Each physical invocation gets
-   a local number so the model can match an RPC return to its waiting handler.
-   This number is never proposed or used to suppress a retry.
+1. A `submit_request` event records a service submission. When a replica
+   handles the request, a nonleader forwards it and a leader issues an RPC.
+   Retries follow the same path.
+2. The `rpc_return` event records the exact response for that numbered RPC. At
+   `resume_request`, the waiting handler proposes the request ID and that
+   response, even if the replica has since lost leadership.
 3. A learn callback records its entry at the supplied index if the index is new.
    The handler then processes the contiguous prefix available from the next
    unprocessed index. A repeated callback for an existing index returns
@@ -24,19 +24,16 @@ with the actual log. `history` records processed entries for the proofs.
 
 ## Progress assumptions
 
-The request handler uses two fields of `LivenessAssumptions`. `requestAccepted`
-captures L1 and L2 at the leader, and `rpcCompletes` captures L3 and L4 when
-an outstanding RPC returns.
-
 | Paper | Lean contract |
 | --- | --- |
-| L1 and L2 | If a submitted logical request never gets an agreed entry, then after every cutoff some non-faulty replica accepts an invocation as leader. Transport and service retries are represented at this acceptance boundary. |
-| L3 and L4 | Each particular outstanding RPC at a non-faulty replica eventually returns and executes its continuation. The replica can change roles during the wait. |
+| L1 | If no non-faulty replica ever delivers a response for a submitted ID, service code keeps submitting it and non-faulty leaders keep accepting it. |
+| L2 | A message repeatedly sent between non-faulty components is eventually received. The execution records sends and receipts in its network trace. |
+| L3 | An RPC issued by a non-faulty leader eventually returns a response for that attempt. |
+| L4 | At a non-faulty replica, a request handler resumes with its returned response and proposes it. Each received learn callback also completes. |
 | CG3(1) | Consensus eventually elects a non-faulty leader. L1 already supplies the leader acceptance used by Lemma 3. |
 | CG3(2) | If consensus keeps receiving proposals for one ID, some proposed entry for that ID is eventually agreed at a positive index. The responses can differ. |
 | CG2 | Agreement at an index implies agreement at each preceding positive index. |
 | CG3(3) | Every non-faulty replica eventually receives the learn callback for each agreed entry. |
-| L4 for learn callbacks | Each callback invoked at a non-faulty replica eventually completes. Its receipt time identifies which invocation finished. |
 
 These are parameters of the theorems. An RPC continuation calls `propose` in
 the same model step. This is the boundary at which consensus receives a
@@ -56,10 +53,11 @@ seen = ids(delivered)
 delivered = dedup(history)
 ```
 
-For Lemma 3, suppose no entry is ever agreed for a submitted request. After
-any cutoff, L1 supplies a new accepted invocation, and L3/L4 supply its
-continuation. Thus consensus receives proposals for that ID after every cutoff.
-CG3(2) gives agreement on some proposed entry, contradicting the supposition.
+For Lemma 3, suppose no entry is ever agreed for a submitted ID. A non-faulty
+replica can deliver only from an agreed entry, so the request stays pending.
+After any cutoff, L1 supplies another accepted invocation. By L3 its RPC
+returns, and by L4 its handler proposes that response. CG3(2) then gives
+agreement on one such proposal, contradicting the supposition.
 
 For Lemma 4, CG2 gives the agreed prefix. By CG3(3), each non-faulty replica
 receives the callback for each entry. By L4, each handler completes. Its
