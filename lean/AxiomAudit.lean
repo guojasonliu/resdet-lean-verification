@@ -26,7 +26,7 @@ run_cmd do
     `Resdet.theorem_1_safety, `Resdet.theorem_1_on_execution,
     `Resdet.lemma_3_eventual_agreement, `Resdet.lemma_4_eventual_prefix_learning,
     `Resdet.lemma_5_eventual_delivery, `Resdet.lemma_5_on_execution,
-    `Resdet.theorem_2_liveness, `Resdet.delivered_permanently_once,
+    `Resdet.theorem_2_liveness,
     `Resdet.HandlerTests.out_of_order_waits, `Resdet.HandlerTests.filling_gap_drains_prefix,
     `Resdet.HandlerTests.duplicate_callback_ignored, `Resdet.HandlerTests.nonleader_forwards_payload,
     `Resdet.HandlerTests.retry_issues_another_call,

@@ -369,20 +369,4 @@ theorem theorem_2_liveness (consensus : Consensus run nonfaulty agreed)
     lemma_5_on_execution run learnedTime n index (request, response) positive prefixPresent recorded
   exact ⟨learnedTime, Nat.zero_le _, delivered, member⟩
 
-/-- Delivery persists and remains unique; the theorem concerns delivery to
-service code, not exactly-once physical execution at the downstream service. -/
-theorem delivered_permanently_once (time : Nat) (n : Node) (request : Request) (response : Response)
-    (member : (request, response) ∈ (run.state time n).delivery.delivered) :
-    ∀ later, time ≤ later →
-      (request, response) ∈ (run.state later n).delivery.delivered ∧
-      ((run.state later n).delivery.delivered.map Prod.fst).count request = 1 := by
-  intro later afterTime
-  have retained := (run.delivery_mono n afterTime).subset member
-  refine ⟨retained, ?_⟩
-  have idMember : request ∈ (run.state later n).delivery.delivered.map Prod.fst :=
-    List.mem_map_of_mem retained
-  have positive := List.count_pos_iff.mpr idMember
-  have bound := List.nodup_iff_count.mp (at_most_once_delivery (run.invariant later n)) request
-  omega
-
 end Resdet
