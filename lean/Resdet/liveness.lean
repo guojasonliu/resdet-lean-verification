@@ -294,30 +294,45 @@ theorem deliver_covers (items : List (Item Request Response))
   · exact Or.inl old
   · simpa [consistent] using dedupFrom_covers s.seen items request incoming
 
-/-- Once a prefix is processed, every ID in it is represented in delivery. -/
-theorem processed_entry_delivered {s : LocalState Request Response} (h : LocalInvariant s)
+/-- Split delivery at a processed index. The earlier deliveries supply the seen IDs
+when deduplication reaches the entry at that index. -/
+private theorem delivery_split_at_index {s : LocalState Request Response} (h : LocalInvariant s)
     {index : Nat} {entry : Item Request Response} (positive : 1 ≤ index)
     (processed : index ≤ s.processed) (recorded : s.log index = some entry) :
-    ∃ response, (entry.1, response) ∈ s.delivered := by
+    let earlier := dedup (s.history.take (index - 1))
+    s.delivered = earlier ++ dedupFrom (earlier.map Prod.fst) (entry :: s.history.drop index) := by
   have inHistory : s.history[index - 1]? = some entry := by
     rw [h.historyLog (index - 1) (by omega), Nat.sub_add_cancel positive]
     exact recorded
-  have member : entry ∈ s.history := List.mem_of_getElem? inHistory
-  have covered := dedup_covers (List.mem_map_of_mem member)
-  rw [← h.delivery] at covered
-  obtain ⟨item, inside, same⟩ := List.mem_map.mp covered
-  rcases item with ⟨id, value⟩
-  simp only at same
-  subst id
-  exact ⟨value, inside⟩
+  obtain ⟨inside, atIndex⟩ := List.getElem?_eq_some_iff.mp inHistory
+  have split := List.take_append_drop (index - 1) s.history
+  rw [List.drop_eq_getElem_cons inside, atIndex, Nat.sub_add_cancel positive] at split
+  calc
+    s.delivered = dedup s.history := h.delivery
+    _ = dedup (s.history.take (index - 1) ++ entry :: s.history.drop index) := congrArg dedup split.symm
+    _ = _ := by simp only [dedup, dedupFrom_append, List.nil_append]
 
-/-- Paper Lemma 5 at a completed handler boundary. -/
+/-- Lemma 5. At handler completion, processing has reached the entry at index i.
+A fresh ID delivers the response at i. A duplicate keeps the earlier response. -/
 theorem lemma_5_eventual_delivery {s : LocalState Request Response}
     (h : LocalInvariant s) (complete : Completed s) {index : Nat}
     {entry : Item Request Response} (positive : 1 ≤ index)
     (presentPrefix : PrefixPresent s index) (recorded : s.log index = some entry) :
-    ∃ response, (entry.1, response) ∈ s.delivered :=
-  processed_entry_delivered h positive (complete index presentPrefix) recorded
+    ∃ response, (entry.1, response) ∈ s.delivered := by
+  obtain ⟨request, response⟩ := entry
+  let earlier := dedup (s.history.take (index - 1))
+  rw [delivery_split_at_index h positive (complete index presentPrefix) recorded]
+  change ∃ y, (request, y) ∈ earlier ++
+    dedupFrom (earlier.map Prod.fst) ((request, response) :: s.history.drop index)
+  by_cases fresh : request ∉ earlier.map Prod.fst
+  · -- First occurrence: processing this entry delivers its own response.
+    rw [dedupFrom, if_neg fresh]
+    exact ⟨response, List.mem_append_right _ List.mem_cons_self⟩
+  · -- Duplicate: the prefix before this index already delivered a response for this ID.
+    have seen : request ∈ earlier.map Prod.fst := by simpa using fresh
+    rw [dedupFrom, if_pos seen]
+    obtain ⟨⟨_, previousResponse⟩, deliveredEarlier, rfl⟩ := List.mem_map.mp seen
+    exact ⟨previousResponse, List.mem_append_left _ deliveredEarlier⟩
 
 end Resdet
 
