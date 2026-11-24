@@ -268,12 +268,13 @@ theorem log_preserved {leader : Bool} {event : Event Request Payload Response}
 theorem log_origin {leader : Bool} {event : Event Request Payload Response}
     {s t : Replica Request Payload Response} (h : Step leader event s t)
     {index : Nat} {entry : Item Request Response} (recorded : t.delivery.log index = some entry) :
-    s.delivery.log index = some entry ∨ event = .handle_learn index entry := by
+    s.delivery.log index = some entry ∨
+      ∃ receivedAt, event = .handle_learn receivedAt index entry := by
   cases h with
   | handle_learn =>
       rcases handle_learn_log_origin _ _ _ recorded with old | ⟨rfl, rfl⟩
       · exact Or.inl old
-      · exact Or.inr rfl
+      · exact Or.inr ⟨_, rfl⟩
   | _ => exact Or.inl recorded
 
 theorem delivery_prefix {leader : Bool} {event : Event Request Payload Response}
@@ -303,14 +304,15 @@ theorem log_mono (n : Node) {a b index : Nat} {entry : Item Request Response}
 
 theorem log_origin (time : Nat) (n : Node) {index : Nat} {entry : Item Request Response}
     (recorded : (run.state time n).delivery.log index = some entry) :
-    ∃ earlier, earlier < time ∧ run.event earlier n = .handle_learn index entry := by
+    ∃ earlier receivedAt, earlier < time ∧
+      run.event earlier n = .handle_learn receivedAt index entry := by
   induction time with
   | zero => simp [run.initial, initialLocal] at recorded
   | succ time ih =>
-      rcases (run.next time n).log_origin recorded with old | event
-      · obtain ⟨earlier, before, origin⟩ := ih old
-        exact ⟨earlier, by omega, origin⟩
-      · exact ⟨time, Nat.lt_succ_self _, event⟩
+      rcases (run.next time n).log_origin recorded with old | ⟨receivedAt, event⟩
+      · obtain ⟨earlier, receipt, before, origin⟩ := ih old
+        exact ⟨earlier, receipt, by omega, origin⟩
+      · exact ⟨time, receivedAt, Nat.lt_succ_self _, event⟩
 
 theorem delivery_mono (n : Node) {a b : Nat} (order : a ≤ b) :
     (run.state a n).delivery.delivered <+: (run.state b n).delivery.delivered :=
@@ -398,24 +400,6 @@ theorem at_most_once_delivery {s : LocalState Request Response} (h : LocalInvari
 
 end Resdet
 
-/-! ## CG1 applies to actual recorded entries -/
-namespace Resdet.Execution
-
-variable {Node Request Payload Response : Type} [DecidableEq Request]
-variable (run : Execution Node Request Payload Response)
-variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Response → Prop}
-
-/-- Recorded local entries originated at callbacks, so CG1 applies to them. -/
-theorem index_agreement (cg1 : CallbackAgreement run nonfaulty)
-    (a b : Nat) (r t : Node) (hr : nonfaulty r) (ht : nonfaulty t) :
-    IndexAgreement (run.state a r).delivery (run.state b t).delivery := by
-  intro index left right positive hl hr'
-  obtain ⟨u, _, callbackL⟩ := run.log_origin a r hl
-  obtain ⟨v, _, callbackR⟩ := run.log_origin b t hr'
-  exact cg1 u v r t index left right hr ht positive callbackL callbackR
-
-end Resdet.Execution
-
 /-! ## Theorem 1 on executions of the pseudocode -/
 namespace Resdet
 
@@ -424,11 +408,11 @@ variable {Node Request Payload Response : Type} [DecidableEq Request]
 /-- Theorem 1 on actual executions; local invariants are proved from the handlers. -/
 theorem theorem_1_on_execution (run : Execution Node Request Payload Response)
     {nonfaulty : Node → Prop}
-    (cg1 : CallbackAgreement run nonfaulty) (a b : Nat) (r t : Node)
+    (cg1 : CG1 run nonfaulty) (a b : Nat) (r t : Node)
     (hr : nonfaulty r) (ht : nonfaulty t) {request : Request} {left right : Response}
     (hl : (request, left) ∈ (run.state a r).delivery.delivered)
     (hr' : (request, right) ∈ (run.state b t).delivery.delivered) : left = right :=
   theorem_1_safety (run.invariant a r) (run.invariant b t)
-    (run.index_agreement cg1 a b r t hr ht) hl hr'
+    (fun index x y => cg1 a b r t index x y hr ht) hl hr'
 
 end Resdet

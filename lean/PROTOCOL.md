@@ -35,7 +35,8 @@ an outstanding RPC returns.
 | CG3(1) | Consensus eventually elects a non-faulty leader. L1 already supplies the leader acceptance used by Lemma 3. |
 | CG3(2) | If consensus keeps receiving proposals for one ID, some proposed entry for that ID is eventually agreed at a positive index. The responses can differ. |
 | CG2 | Agreement at an index implies agreement at each preceding positive index. |
-| CG3(3) and L4 | Each non-faulty replica either already has the agreed entry or eventually executes its matching learn callback. |
+| CG3(3) | Every non-faulty replica eventually receives the learn callback for each agreed entry. |
+| L4 for learn callbacks | Each callback invoked at a non-faulty replica eventually completes. Its receipt time identifies which invocation finished. |
 
 These are parameters of the theorems. An RPC continuation calls `propose` in
 the same model step. This is the boundary at which consensus receives a
@@ -44,10 +45,9 @@ its implementation. [Consensus guarantees](Resdet/consensus_assumptions.lean) ·
 
 ## What the proofs use
 
-For safety, Resdet assumes CG1. The consensus interface supplies this guarantee
-because callbacks for the same index carry the same committed entry
-(`Consensus.callbacksAgree`). The processing invariant relates each replica’s
-delivery history to its independently learned local log.
+For safety, Resdet assumes CG1 directly. If two non-faulty replicas learn
+entries at the same index, those entries are equal. The processing invariant
+relates each replica’s delivery history to its independently learned local log.
 
 ```text
 history.length = processed
@@ -61,12 +61,10 @@ any cutoff, L1 supplies a new accepted invocation, and L3/L4 supply its
 continuation. Thus consensus receives proposals for that ID after every cutoff.
 CG3(2) gives agreement on some proposed entry, contradicting the supposition.
 
-For Lemma 4, a positive index has one committed value across time and each
-learn callback at a non-faulty replica carries that value. Together these
-Section 4.1 assumptions imply agreement between callbacks, even duplicates at
-the same replica. Once a callback completes, the local slot contains the
-agreed value, whether it was just written or was already present. CG2 and
-CG3(3) extend this argument to the finite prefix.
+For Lemma 4, CG2 gives the agreed prefix. By CG3(3), each non-faulty replica
+receives the callback for each entry. By L4, each handler completes. Its
+slot then contains the agreed entry, including when an earlier callback
+already wrote it under the Section 4.1 interface.
 
 For Lemma 5, processing a complete prefix either delivers the response at the
 specified index or has already delivered a response for its request ID from an

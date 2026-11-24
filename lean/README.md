@@ -7,7 +7,7 @@ beside Sections 4 and 5 of the paper.
 | --- | --- |
 | [resdet.lean](Resdet/resdet.lean) | Section 4. Replica state, handlers, and execution steps. |
 | [consensus_assumptions.lean](Resdet/consensus_assumptions.lean) | The committed-entry callback interface and CG1–CG3. |
-| [liveness_assumptions.lean](Resdet/liveness_assumptions.lean) | L1–L4 at request acceptance and RPC completion. |
+| [liveness_assumptions.lean](Resdet/liveness_assumptions.lean) | L1–L4 for request acceptance, RPC returns, and handler completion. |
 | [safety.lean](Resdet/safety.lean) | Local invariants, Lemmas 1–2, and Theorem 1. |
 | [liveness.lean](Resdet/liveness.lean) | Lemmas 3–5 and Theorem 2. |
 | [dedup.lean](Resdet/dedup.lean) | First-response delivery by request ID. |

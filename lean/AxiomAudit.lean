@@ -15,7 +15,8 @@ run_cmd do
   let required := #[
     `Resdet.dedupFrom_append, `Resdet.dedupFrom_nodup,
     `Resdet.deliver_consistent, `Resdet.deliver_append,
-    `Resdet.Step.accepted_rpc_pending, `Resdet.Consensus.callbacksAgree,
+    `Resdet.Step.accepted_rpc_pending, `Resdet.Consensus.cg1,
+    `Resdet.Consensus.cg3_3, `Resdet.LivenessAssumptions.l4,
     `Resdet.handle_learn_invariant, `Resdet.handle_learn_completed,
     `Resdet.Execution.invariant, `Resdet.Execution.completed,
     `Resdet.Execution.learn_event_recorded,
@@ -29,6 +30,7 @@ run_cmd do
     `Resdet.HandlerTests.retry_issues_another_call,
     `Resdet.HandlerTests.overlapping_retries_complete_independently,
     `Resdet.ExampleExecution.first_proposal_can_be_lost,
+    `Resdet.ExampleExecution.receipt_precedes_completion,
     `Resdet.ExampleExecution.consensus_contract, `Resdet.ExampleExecution.liveness_assumptions,
     `Resdet.ExampleExecution.concrete_delivery, `Resdet.ExampleExecution.safety_instance,
     `Resdet.ExampleExecution.liveness_instance]

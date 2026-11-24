@@ -57,8 +57,8 @@ namespace Resdet.Step
 variable {Node Request Payload Response : Type} [DecidableEq Request]
 
 theorem learn_result {s t : Replica Request Payload Response}
-    {leader : Bool} {index : Nat} {entry : Item Request Response}
-    (h : Step leader (.handle_learn index entry) s t) :
+    {leader : Bool} {receivedAt index : Nat} {entry : Item Request Response}
+    (h : Step leader (.handle_learn receivedAt index entry) s t) :
     t.delivery = Resdet.handle_learn s.delivery index entry := by
   cases h
   rfl
@@ -75,10 +75,10 @@ variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Resp
 /-- When the slot is already present, the earlier callback carried the unique
 committed entry at this index (Section 4.1). -/
 theorem learn_event_recorded (consensus : Consensus run nonfaulty agreed)
-    {agreedAt : Nat}
+    {agreedAt receivedAt : Nat}
     (time : Nat) (n : Node) (hn : nonfaulty n) (index : Nat) (entry : Item Request Response)
     (positive : 1 ≤ index) (committed : agreed agreedAt index entry)
-    (event : run.event time n = .handle_learn index entry) :
+    (event : run.event time n = .handle_learn receivedAt index entry) :
     (run.state (time + 1) n).delivery.log index = some entry := by
   have step := run.next time n
   rw [event] at step
@@ -86,9 +86,10 @@ theorem learn_event_recorded (consensus : Consensus run nonfaulty agreed)
   cases recorded : (run.state time n).delivery.log index with
   | none => exact handle_learn_records _ _ _ recorded
   | some old =>
-      obtain ⟨earlier, _, callback⟩ := run.log_origin time n recorded
+      obtain ⟨earlier, oldReceipt, _, callback⟩ := run.log_origin time n recorded
+      have receipt := (run.learnInvoked earlier n oldReceipt index old callback).2
       obtain ⟨oldTime, _, oldCommitted⟩ :=
-        consensus.callbackOrigin earlier n index old hn positive callback
+        consensus.callbackOrigin oldReceipt n index old hn positive receipt
       have same := consensus.agreedEntryUnique oldTime agreedAt index old entry
         positive oldCommitted committed
       simp [handle_learn, recorded, same]
@@ -112,19 +113,20 @@ variable {Node Request Payload Response : Type} [DecidableEq Request]
 variable (run : Execution Node Request Payload Response)
 variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Response → Prop}
 
-/-- CG3(3) and L4 ensure that the replica eventually has the agreed entry,
-including when its callback finds the entry already recorded. -/
+/-- CG3(3) supplies receipt of the callback. L4 then completes that invocation
+with the agreed entry in the local log, including for a duplicate callback. -/
 theorem agreed_eventually_recorded (consensus : Consensus run nonfaulty agreed)
+    (l4 : L4 run nonfaulty)
     (start index : Nat) (entry : Item Request Response) (positive : 1 ≤ index)
     (committed : agreed start index entry) (n : Node) (hn : nonfaulty n) :
     EventuallyFrom start (fun time => (run.state time n).delivery.log index = some entry) := by
-  rcases consensus.learnCallbacks start index entry positive committed n hn with old | later
-  · exact ⟨start, Nat.le_refl _, old⟩
-  · obtain ⟨time, afterStart, event⟩ := later
-    exact ⟨time + 1, by omega,
-      run.learn_event_recorded consensus time n hn index entry positive committed event⟩
+  obtain ⟨_, _, receivedAt, _, receipt⟩ := consensus.cg3_3 start index entry positive committed n hn
+  obtain ⟨time, _, completion⟩ := l4 receivedAt n index entry hn receipt
+  have recorded := run.learn_event_recorded consensus time n hn index entry positive committed completion
+  exact ⟨max start (time + 1), Nat.le_max_left _ _, run.log_mono n (Nat.le_max_right _ _) recorded⟩
 
 theorem finite_prefix_eventually_recorded (consensus : Consensus run nonfaulty agreed)
+    (l4 : L4 run nonfaulty)
     (start count : Nat) (n : Node) (hn : nonfaulty n)
     (available : ∀ index, 1 ≤ index → index ≤ count → ∃ entry, agreed start index entry) :
     EventuallyFrom start (fun time => PrefixPresent (run.state time n).delivery count) := by
@@ -133,7 +135,7 @@ theorem finite_prefix_eventually_recorded (consensus : Consensus run nonfaulty a
   | succ count ih =>
       obtain ⟨a, ha, earlier⟩ := ih (fun index positive before => available index positive (by omega))
       obtain ⟨entry, committed⟩ := available (count + 1) (by omega) (Nat.le_refl _)
-      obtain ⟨b, hb, last⟩ := agreed_eventually_recorded run consensus start (count + 1)
+      obtain ⟨b, hb, last⟩ := agreed_eventually_recorded run consensus l4 start (count + 1)
         entry (by omega) committed n hn
       refine ⟨max a b, by omega, ?_⟩
       intro index positive before
@@ -146,13 +148,14 @@ theorem finite_prefix_eventually_recorded (consensus : Consensus run nonfaulty a
 /-- Lemma 4: every non-faulty replica eventually records the agreed prefix,
 including the specified response entry at its final index. -/
 theorem lemma_4_eventual_prefix_learning (consensus : Consensus run nonfaulty agreed)
+    (l4 : L4 run nonfaulty)
     (start index : Nat) (entry : Item Request Response) (positive : 1 ≤ index)
     (committed : agreed start index entry) (n : Node) (hn : nonfaulty n) :
     EventuallyFrom start (fun time => PrefixPresent (run.state time n).delivery index ∧
       (run.state time n).delivery.log index = some entry) := by
-  obtain ⟨a, ha, prefixPresent⟩ := finite_prefix_eventually_recorded run consensus start index n hn
+  obtain ⟨a, ha, prefixPresent⟩ := finite_prefix_eventually_recorded run consensus l4 start index n hn
     (consensus.prefixAgreement start index entry committed)
-  obtain ⟨b, hb, last⟩ := agreed_eventually_recorded run consensus start index entry positive committed n hn
+  obtain ⟨b, hb, last⟩ := agreed_eventually_recorded run consensus l4 start index entry positive committed n hn
   refine ⟨max a b, by omega, ?_, run.log_mono n (Nat.le_max_right _ _) last⟩
   intro k hk before
   obtain ⟨value, recorded⟩ := prefixPresent k hk before
@@ -326,7 +329,8 @@ theorem theorem_2_liveness (consensus : Consensus run nonfaulty agreed)
   obtain ⟨agreedTime, index, response, positive, committed⟩ :=
     lemma_3_eventual_agreement run consensus liveness request submittedRequest
   obtain ⟨learnedTime, _, prefixPresent, recorded⟩ :=
-    lemma_4_eventual_prefix_learning run consensus agreedTime index (request, response) positive committed n hn
+    lemma_4_eventual_prefix_learning run consensus liveness.l4 agreedTime index (request, response)
+      positive committed n hn
   obtain ⟨delivered, member⟩ :=
     lemma_5_on_execution run learnedTime n index (request, response) positive prefixPresent recorded
   exact ⟨learnedTime, Nat.zero_le _, delivered, member⟩

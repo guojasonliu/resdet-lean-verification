@@ -118,8 +118,9 @@ end Resdet
 
 /-! ## Executions of the handlers
 
-Each replica has its own log. Events serialize nonblocking local updates;
-RPC waiting occurs between the request and response-continuation events.
+Each replica has its own log. Events serialize nonblocking local updates.
+An RPC can wait between request and response events. Likewise, a received
+learn callback can wait before its handler updates the local log.
 State is preserved within an incarnation; reset and recovery are not modeled.
 -/
 namespace Resdet
@@ -131,14 +132,15 @@ structure Replica (Request Payload Response : Type) where
 inductive Event (Request Payload Response : Type)
   | handle_request (request : Request) (payload : Payload)
   | resume_request (attempt : Nat) (request : Request) (response : Response)
-  | handle_learn (index : Nat) (entry : Item Request Response)
+  | receive_learn (index : Nat) (entry : Item Request Response)
+  | handle_learn (receivedAt index : Nat) (entry : Item Request Response)
   | idle
   deriving DecidableEq
 
 variable {Node Request Payload Response : Type} [DecidableEq Request]
 
-/-- Each event completes one nonblocking handler segment. RPC waiting occurs
-between `handle_request` and `resume_request`; the latter does not query leadership. -/
+/-- Receipt of a learn callback leaves the protocol state unchanged. When its
+handler executes, it updates the log and runs the processing loop. -/
 inductive Step (isLeader : Bool) : Event Request Payload Response →
     Replica Request Payload Response → Replica Request Payload Response → Prop
   | handle_request (s) (request payload) :
@@ -148,8 +150,9 @@ inductive Step (isLeader : Bool) : Event Request Payload Response →
       (pending : (attempt, request) ∈ s.requests.pending) :
       Step isLeader (.resume_request attempt request response) s
         { s with requests := Requests.resume_request attempt request response s.requests }
-  | handle_learn (s) (index entry) :
-      Step isLeader (.handle_learn index entry) s
+  | receive_learn (s) (index entry) : Step isLeader (.receive_learn index entry) s s
+  | handle_learn (s) (receivedAt index entry) :
+      Step isLeader (.handle_learn receivedAt index entry) s
         { s with delivery := handle_learn s.delivery index entry }
   | idle (s) : Step isLeader .idle s s
 
@@ -159,6 +162,10 @@ structure Execution (Node Request Payload Response : Type) [DecidableEq Request]
   event : Nat → Node → Event Request Payload Response
   initial : ∀ n, state 0 n = {}
   next : ∀ time n, Step (leader time n) (event time n) (state time n) (state (time + 1) n)
+  /-- A completed learn handler refers to its own earlier invocation. -/
+  learnInvoked : ∀ time n receivedAt index entry,
+    event time n = .handle_learn receivedAt index entry →
+    receivedAt < time ∧ event receivedAt n = .receive_learn index entry
 
 def EventuallyFrom (start : Nat) (p : Nat → Prop) : Prop :=
   ∃ time, start ≤ time ∧ p time
