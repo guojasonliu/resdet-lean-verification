@@ -4,7 +4,7 @@ import Resdet
 Kernel-checked examples of out-of-order learning, delivery deduplication, and
 overlapping physical invocations for one logical request.
 -/
-namespace Resdet.Tests
+namespace Resdet.HandlerTests
 
 abbrev Replica := LocalState Nat Nat
 
@@ -66,4 +66,4 @@ theorem overlapping_retries_complete_independently :
     secondReturnsFirst.pending = [(0, 1)] ∧ bothReturned.pending = [] ∧
     bothReturned.proposals = [(1, 7), (1, 9)] := by decide
 
-end Resdet.Tests
+end Resdet.HandlerTests

@@ -19,11 +19,11 @@ only the first response for each request ID.
 
 [PROTOCOL.md](PROTOCOL.md) explains the execution model and liveness contracts.
 [PAPER.md](PAPER.md) maps the numbered proofs to the paper and lists their scope.
-[Tests.lean](Tests.lean) checks the handlers, and
-[ContractsTests.lean](ContractsTests.lean) supplies an execution satisfying the contracts.
+The handler tests check retries, out-of-order callbacks, and delivery. [HandlerTests.lean](HandlerTests.lean)
+The example follows one request through a leader change, retry, and delivery. [ExampleExecution.lean](ExampleExecution.lean)
 
 Run `make check-lean` from the repository root with Lean 4.24.0 installed. To
 install the pinned toolchain locally, run `make fetch-lean`. The check builds the
-proofs and examples with warnings as errors, then runs [Audit.lean](Audit.lean).
+proofs and examples with warnings as errors, then runs [AxiomAudit.lean](AxiomAudit.lean).
 The audit checks every Resdet declaration for transitive dependencies on axioms
 outside Lean’s standard `propext`, `Quot.sound`, and `Classical.choice`.

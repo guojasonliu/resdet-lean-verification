@@ -19,8 +19,7 @@ variable {nonfaulty : Node → Prop} {agreed : Nat → Nat → Item Request Resp
 /-- Lemma 3. In the absence of agreement, each retry starts an RPC (L1) and
 eventually proposes a response (L3/L4). CG3(2) then gives agreement for this ID. -/
 theorem lemma_3_eventual_agreement (consensus : Consensus run nonfaulty agreed)
-    {submitted : Request → Prop} (submissions : SubmissionProgress run nonfaulty agreed submitted)
-    (handlers : RequestProgress run nonfaulty)
+    {submitted : Request → Prop} (liveness : LivenessAssumptions run nonfaulty agreed submitted)
     (request : Request) (submittedRequest : submitted request) :
     ∃ time index response, 1 ≤ index ∧ agreed time index (request, response) := by
   apply Classical.byContradiction
@@ -28,11 +27,11 @@ theorem lemma_3_eventual_agreement (consensus : Consensus run nonfaulty agreed)
   have repeated : RepeatedProposals run request := by
     intro cutoff
     obtain ⟨time, n, payload, afterCutoff, healthy, leader, accepted⟩ :=
-      submissions.accept cutoff request submittedRequest neverAgreed
+      liveness.requestAccepted cutoff request submittedRequest neverAgreed
     have step := run.next time n
     rw [leader, accepted] at step
     obtain ⟨later, response, afterCall, resumed⟩ :=
-      handlers.resume (time + 1) n _ request healthy step.accepted_rpc_pending
+      liveness.rpcCompletes (time + 1) n _ request healthy step.accepted_rpc_pending
     exact ⟨later, n, _, response, by omega, resumed⟩
   obtain ⟨_, _, _, response, time, index, _, _, positive, agreedEntry⟩ :=
     consensus.repeatedProposalProgress request repeated
@@ -319,14 +318,13 @@ theorem lemma_5_on_execution (time : Nat) (n : Node) (index : Nat)
 /-- Theorem 2: the three numbered liveness lemmas compose into eventual delivery.
 Each learned slot retains the committed entry supplied by the consensus callback. -/
 theorem theorem_2_liveness (consensus : Consensus run nonfaulty agreed)
-    {submitted : Request → Prop} (submissions : SubmissionProgress run nonfaulty agreed submitted)
-    (handlers : RequestProgress run nonfaulty) :
+    {submitted : Request → Prop} (liveness : LivenessAssumptions run nonfaulty agreed submitted) :
     ∀ request, submitted request → ∀ n, nonfaulty n →
       EventuallyFrom 0 (fun time => ∃ response,
         (request, response) ∈ (run.state time n).delivery.delivered) := by
   intro request submittedRequest n hn
   obtain ⟨agreedTime, index, response, positive, committed⟩ :=
-    lemma_3_eventual_agreement run consensus submissions handlers request submittedRequest
+    lemma_3_eventual_agreement run consensus liveness request submittedRequest
   obtain ⟨learnedTime, _, prefixPresent, recorded⟩ :=
     lemma_4_eventual_prefix_learning run consensus agreedTime index (request, response) positive committed n hn
   obtain ⟨delivered, member⟩ :=

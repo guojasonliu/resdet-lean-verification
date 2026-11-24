@@ -5,7 +5,7 @@ A non-faulty replica loses leadership during its first RPC. Its response 7 is
 proposed but never agreed. The same replica is elected again, retries the same
 request, proposes response 9, and learns that entry at index 1.
 -/
-namespace Resdet.ContractsTests
+namespace Resdet.ExampleExecution
 
 def s0 : Replica Nat Nat Nat := {}
 def s1 := { s0 with requests := Requests.handle_request true 1 42 s0.requests }
@@ -105,8 +105,13 @@ theorem consensus_contract : Consensus run nonfaulty agreed where
     | 4 => exact Or.inr ⟨4, Nat.le_refl _, rfl⟩
     | _ + 5 => exact Or.inl rfl
 
-theorem request_progress : RequestProgress run nonfaulty where
-  resume := by
+theorem liveness_assumptions : LivenessAssumptions run nonfaulty agreed submitted where
+  requestAccepted := by
+    intro cutoff request hs neverAgreed
+    change request = 1 at hs
+    subst request
+    exact False.elim (neverAgreed ⟨4, 1, 9, by decide, by decide, rfl, rfl⟩)
+  rpcCompletes := by
     intro start node attempt request _ pending
     match start with
     | 0 | 2 | 4 | _ + 5 => change _ ∈ ([] : List (Nat × Nat)) at pending; simp at pending
@@ -119,21 +124,14 @@ theorem request_progress : RequestProgress run nonfaulty where
       cases eq
       exact ⟨3, 9, by decide, rfl⟩
 
-theorem submission_progress : SubmissionProgress run nonfaulty agreed submitted where
-  accept := by
-    intro cutoff request hs neverAgreed
-    change request = 1 at hs
-    subst request
-    exact False.elim (neverAgreed ⟨4, 1, 9, by decide, by decide, rfl, rfl⟩)
-
 theorem safety_instance {a b : Nat} {x y : Nat}
     (hx : (1, x) ∈ (run.state a ()).delivery.delivered)
     (hy : (1, y) ∈ (run.state b ()).delivery.delivered) : x = y :=
-  theorem_1_on_execution run consensus_contract.indexAgreement a b () () trivial trivial hx hy
+  theorem_1_on_execution run consensus_contract.callbacksAgree a b () () trivial trivial hx hy
 
 theorem liveness_instance :
     EventuallyFrom 0 (fun time => ∃ response, (1, response) ∈
       (run.state time ()).delivery.delivered) :=
-  theorem_2_liveness run consensus_contract submission_progress request_progress 1 rfl () trivial
+  theorem_2_liveness run consensus_contract liveness_assumptions 1 rfl () trivial
 
-end Resdet.ContractsTests
+end Resdet.ExampleExecution

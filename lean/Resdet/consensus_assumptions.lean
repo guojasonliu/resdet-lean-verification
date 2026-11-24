@@ -9,6 +9,8 @@ namespace Resdet
 
 variable {Node Request Payload Response : Type} [DecidableEq Request]
 
+/-- CG1 at the callback interface. Resdet assumes that callbacks at the same
+positive index agree at non-faulty replicas, even at different times. -/
 def CallbackAgreement (run : Execution Node Request Payload Response)
     (nonfaulty : Node → Prop) : Prop :=
   ∀ a b r t index left right, nonfaulty r → nonfaulty t → 1 ≤ index →
@@ -53,9 +55,9 @@ namespace Consensus
 variable {run : Execution Node Request Payload Response} {nonfaulty : Node → Prop}
 variable {agreed : Nat → Nat → Item Request Response → Prop}
 
-/-- CG1 at the callback interface follows from the unique committed entry.
-The safety proof can also use callback agreement on its own. -/
-theorem indexAgreement (consensus : Consensus run nonfaulty agreed) :
+/-- The Section 4.1 interface supplies CG1 because both callbacks carry the
+unique entry committed at their index. -/
+theorem callbacksAgree (consensus : Consensus run nonfaulty agreed) :
     CallbackAgreement run nonfaulty := by
   intro a b r t index left right hr ht positive leftCallback rightCallback
   obtain ⟨u, _, hl⟩ := consensus.callbackOrigin a r index left hr positive leftCallback

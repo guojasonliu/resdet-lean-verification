@@ -24,6 +24,10 @@ with the actual log. `history` records processed entries for the proofs.
 
 ## Progress assumptions
 
+The request handler uses two fields of `LivenessAssumptions`. `requestAccepted`
+captures L1 and L2 at the leader, and `rpcCompletes` captures L3 and L4 when
+an outstanding RPC returns.
+
 | Paper | Lean contract |
 | --- | --- |
 | L1 and L2 | If a submitted logical request never gets an agreed entry, then after every cutoff some non-faulty replica accepts an invocation as leader. Transport and service retries are represented at this acceptance boundary. |
@@ -40,8 +44,10 @@ its implementation. [Consensus guarantees](Resdet/consensus_assumptions.lean) ·
 
 ## What the proofs use
 
-For safety, the processing invariant relates each replica’s delivery history
-to its independently learned local log.
+For safety, Resdet assumes CG1. The consensus interface supplies this guarantee
+because callbacks for the same index carry the same committed entry
+(`Consensus.callbacksAgree`). The processing invariant relates each replica’s
+delivery history to its independently learned local log.
 
 ```text
 history.length = processed

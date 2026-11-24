@@ -26,4 +26,4 @@ case "$version" in
   *) echo "Expected pinned Lean 4.24.0; got: $version" >&2; exit 1 ;;
 esac
 lake build
-lake env lean -DwarningAsError=true Audit.lean
+lake env lean -DwarningAsError=true AxiomAudit.lean

@@ -1,6 +1,6 @@
 import Resdet
-import Tests
-import ContractsTests
+import HandlerTests
+import ExampleExecution
 import Lean
 
 /-!
@@ -15,7 +15,7 @@ run_cmd do
   let required := #[
     `Resdet.dedupFrom_append, `Resdet.dedupFrom_nodup,
     `Resdet.deliver_consistent, `Resdet.deliver_append,
-    `Resdet.Step.accepted_rpc_pending, `Resdet.Consensus.indexAgreement,
+    `Resdet.Step.accepted_rpc_pending, `Resdet.Consensus.callbacksAgree,
     `Resdet.handle_learn_invariant, `Resdet.handle_learn_completed,
     `Resdet.Execution.invariant, `Resdet.Execution.completed,
     `Resdet.Execution.learn_event_recorded,
@@ -24,15 +24,14 @@ run_cmd do
     `Resdet.lemma_3_eventual_agreement, `Resdet.lemma_4_eventual_prefix_learning,
     `Resdet.lemma_5_eventual_delivery, `Resdet.lemma_5_on_execution,
     `Resdet.theorem_2_liveness, `Resdet.delivered_permanently_once,
-    `Resdet.Tests.out_of_order_waits, `Resdet.Tests.filling_gap_drains_prefix,
-    `Resdet.Tests.duplicate_callback_ignored, `Resdet.Tests.nonleader_forwards_payload,
-    `Resdet.Tests.retry_issues_another_call,
-    `Resdet.Tests.overlapping_retries_complete_independently,
-    `Resdet.ContractsTests.first_proposal_can_be_lost,
-    `Resdet.ContractsTests.consensus_contract, `Resdet.ContractsTests.request_progress,
-    `Resdet.ContractsTests.submission_progress,
-    `Resdet.ContractsTests.concrete_delivery, `Resdet.ContractsTests.safety_instance,
-    `Resdet.ContractsTests.liveness_instance]
+    `Resdet.HandlerTests.out_of_order_waits, `Resdet.HandlerTests.filling_gap_drains_prefix,
+    `Resdet.HandlerTests.duplicate_callback_ignored, `Resdet.HandlerTests.nonleader_forwards_payload,
+    `Resdet.HandlerTests.retry_issues_another_call,
+    `Resdet.HandlerTests.overlapping_retries_complete_independently,
+    `Resdet.ExampleExecution.first_proposal_can_be_lost,
+    `Resdet.ExampleExecution.consensus_contract, `Resdet.ExampleExecution.liveness_assumptions,
+    `Resdet.ExampleExecution.concrete_delivery, `Resdet.ExampleExecution.safety_instance,
+    `Resdet.ExampleExecution.liveness_instance]
   for name in required do
     let _ ← getConstInfo name
   let allowed := #[`propext, `Quot.sound, `Classical.choice]
@@ -49,4 +48,4 @@ run_cmd do
 
 #print axioms Resdet.theorem_1_on_execution
 #print axioms Resdet.theorem_2_liveness
-#print axioms Resdet.ContractsTests.liveness_instance
+#print axioms Resdet.ExampleExecution.liveness_instance
