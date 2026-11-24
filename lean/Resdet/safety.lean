@@ -361,37 +361,54 @@ theorem lemma_2_no_hole_processing {s : LocalState Request Response}
   simpa only [Nat.sub_add_cancel positive] using
     (h.historyLog (earlier - 1) (by omega)).symm.trans (List.getElem?_eq_getElem inside)
 
-/-- Lemmas 1 and 2 give the same ordered entries up to the shorter processed prefix. -/
-theorem processed_history_prefix {left right : LocalState Request Response}
-    (hl : LocalInvariant left) (hr : LocalInvariant right)
-    (cg1 : IndexAgreement left right) (order : left.processed ≤ right.processed) :
-    left.history <+: right.history := by
-  apply List.prefix_iff_getElem?.mpr
-  intro k inside
-  have bound : k < left.processed := by rwa [hl.historyLength] at inside
-  obtain ⟨a, lentry, _⟩ := lemma_2_no_hole_processing hl left.processed (Nat.le_refl _)
-    (k + 1) (by omega) (by omega)
-  obtain ⟨b, rentry, _⟩ := lemma_2_no_hole_processing hr left.processed order
-    (k + 1) (by omega) (by omega)
-  have same := lemma_1_same_processed_entry hl hr cg1 (by omega : 1 ≤ k + 1) lentry rentry
-  simp only [Nat.add_sub_cancel] at lentry rentry
-  have eq : a = left.history[k] :=
-    Option.some.inj (lentry.symm.trans (List.getElem?_eq_getElem inside))
-  simpa [← same, eq] using rentry
+/-- The first processed log entry for this request, using the paper's one-based indices. -/
+private structure FirstOccurrence (s : LocalState Request Response) (request : Request)
+    (response : Response) (index : Nat) : Prop where
+  positive : 1 ≤ index
+  processed : index ≤ s.processed
+  entry : s.history[index - 1]? = some (request, response)
+  first : ∀ k, 1 ≤ k → k < index → ∀ y, s.history[k - 1]? ≠ some (request, y)
+
+/-- Delivery deduplication keeps the response at the first processed index for its ID. -/
+private theorem delivered_at_first_index {s : LocalState Request Response} (inv : LocalInvariant s)
+    {request : Request} {response : Response} (delivered : (request, response) ∈ s.delivered) :
+    ∃ i, FirstOccurrence s request response i := by
+  rw [inv.delivery] at delivered
+  obtain ⟨k, found, first⟩ := dedupFrom_first_occurrence delivered
+  have inside := (List.getElem?_eq_some_iff.mp found).1
+  rw [inv.historyLength] at inside
+  refine ⟨k + 1, by omega, by omega, found, ?_⟩
+  intro j positive earlier
+  exact first (j - 1) (by omega)
+
+/-- If the other replica delivered later, it had already processed this ID at i. -/
+private theorem FirstOccurrence.not_before {r t : LocalState Request Response}
+    (hr : LocalInvariant r) (ht : LocalInvariant t) (cg1 : IndexAgreement r t)
+    {request : Request} {a b : Response} {i j : Nat}
+    (atR : FirstOccurrence r request a i) (atT : FirstOccurrence t request b j) : ¬ i < j := by
+  intro earlier
+  obtain ⟨entry, atEarlier, _⟩ :=
+    lemma_2_no_hole_processing ht j atT.processed i atR.positive (Nat.le_of_lt earlier)
+  have same := lemma_1_same_processed_entry hr ht cg1 atR.positive atR.entry atEarlier
+  rw [← same] at atEarlier
+  exact atT.first i atR.positive earlier a atEarlier
 
 /-- Theorem 1: any two deliveries of one request ID have the same response. -/
 theorem theorem_1_safety {left right : LocalState Request Response}
     (hl : LocalInvariant left) (hr : LocalInvariant right)
     (cg1 : IndexAgreement left right) {request : Request} {a b : Response}
     (ha : (request, a) ∈ left.delivered) (hb : (request, b) ∈ right.delivered) : a = b := by
-  rw [hl.delivery] at ha
-  rw [hr.delivery] at hb
-  rcases Nat.le_total left.processed right.processed with order | order
-  · have pre := dedup_prefix (processed_history_prefix hl hr cg1 order)
-    exact congrArg Prod.snd (eq_of_same_id (dedup_nodup right.history) (pre.subset ha) hb rfl)
-  · have reverse : IndexAgreement right left := fun i x y hi hx hy => (cg1 i y x hi hy hx).symm
-    have pre := dedup_prefix (processed_history_prefix hr hl reverse order)
-    exact congrArg Prod.snd (eq_of_same_id (dedup_nodup left.history) ha (pre.subset hb) rfl)
+  obtain ⟨i, atLeft⟩ := delivered_at_first_index hl ha
+  obtain ⟨j, atRight⟩ := delivered_at_first_index hr hb
+  by_cases same : i = j
+  · subst j
+    have sameEntry := lemma_1_same_processed_entry hl hr cg1 atLeft.positive atLeft.entry atRight.entry
+    exact congrArg Prod.snd sameEntry
+  rcases Nat.lt_or_gt_of_ne same with earlier | later
+  · exact False.elim (atLeft.not_before hl hr cg1 atRight earlier)
+  · have reverse : IndexAgreement right left :=
+      fun k x y positive hx hy => (cg1 k y x positive hy hx).symm
+    exact False.elim (atRight.not_before hr hl reverse atLeft later)
 
 theorem at_most_once_delivery {s : LocalState Request Response} (h : LocalInvariant s) :
     (s.delivered.map Prod.fst).Nodup := by

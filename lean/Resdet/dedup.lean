@@ -98,40 +98,40 @@ theorem dedupFrom_append (seen : List Request) (xs ys : List (Item Request Respo
         rw [ih]
         simp [List.map_cons, List.append_assoc]
 
-theorem dedup_prefix {xs ys : List (Item Request Response)} (h : xs <+: ys) :
-    dedup xs <+: dedup ys := by
-  obtain ⟨suffix, rfl⟩ := h
-  unfold dedup
-  rw [dedupFrom_append]
-  exact List.prefix_append _ _
-
 theorem dedup_nodup (items : List (Item Request Response)) :
     ((dedup items).map Prod.fst).Nodup := dedupFrom_nodup [] items
 
 theorem dedup_mem {item : Item Request Response} {items : List (Item Request Response)}
     (h : item ∈ dedup items) : item ∈ items := dedupFrom_mem h
 
+/-- A delivered pair is the first input entry with its request ID. -/
+theorem dedupFrom_first_occurrence {seen : List Request} {request : Request} {response : Response}
+    {items : List (Item Request Response)} (delivered : (request, response) ∈ dedupFrom seen items) :
+    ∃ k : Nat, items[k]? = some (request, response) ∧
+      ∀ j : Nat, j < k → ∀ old : Response, items[j]? ≠ some (request, old) := by
+  induction items generalizing seen with
+  | nil => simp [dedupFrom] at delivered
+  | cons head rest ih =>
+    obtain ⟨id, value⟩ := head
+    by_cases sameId : id = request
+    · subst id
+      have fresh : request ∉ seen := dedupFrom_fresh delivered
+      simp only [dedupFrom, if_neg fresh, List.mem_cons] at delivered
+      rcases delivered with same | later
+      · exact ⟨0, congrArg some same.symm, by omega⟩
+      · exact False.elim (dedupFrom_fresh later (by simp))
+    · have inTail : (request, response) ∈
+          dedupFrom (if id ∈ seen then seen else seen ++ [id]) rest := by
+        by_cases old : id ∈ seen <;> simpa [dedupFrom, old, Ne.symm sameId] using delivered
+      obtain ⟨k, found, first⟩ := ih inTail
+      refine ⟨k + 1, found, ?_⟩
+      intro j before old
+      cases j with
+      | zero => simp [sameId]
+      | succ j => exact first j (by omega) old
+
 theorem dedup_covers {items : List (Item Request Response)} {request : Request}
     (h : request ∈ items.map Prod.fst) : request ∈ (dedup items).map Prod.fst := by
   simpa using dedupFrom_covers [] items request h
-
-omit [DecidableEq Request] in
-/-- Within an ID-unique history, equal IDs identify the same response item. -/
-theorem eq_of_same_id {items : List (Item Request Response)}
-    (unique : (items.map Prod.fst).Nodup)
-    {a b : Item Request Response} (ha : a ∈ items) (hb : b ∈ items)
-    (ids : a.1 = b.1) : a = b := by
-  induction items with
-  | nil => simp at ha
-  | cons first rest ih =>
-      simp only [List.map_cons, List.nodup_cons] at unique
-      simp only [List.mem_cons] at ha hb
-      rcases ha with rfl | ha
-      · rcases hb with rfl | hb
-        · rfl
-        · exact False.elim (unique.1 (ids ▸ List.mem_map_of_mem hb))
-      · rcases hb with rfl | hb
-        · exact False.elim (unique.1 (ids ▸ List.mem_map_of_mem ha))
-        · exact ih unique.2 ha hb
 
 end Resdet

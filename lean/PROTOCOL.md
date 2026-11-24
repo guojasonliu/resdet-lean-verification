@@ -53,6 +53,12 @@ seen = ids(delivered)
 delivered = dedup(history)
 ```
 
+For Theorem 1, compare the first indices at which the two replicas processed
+the delivered request ID. If the indices match, Lemma 1 gives the same response.
+If one index is earlier, Lemma 2 shows that the other replica also processed
+that index. By Lemma 1 it saw the same ID there, so deduplication rules out
+delivery at the later index.
+
 For Lemma 3, suppose no entry is ever agreed for a submitted ID. A non-faulty
 replica can deliver only from an agreed entry, so the request stays pending.
 After any cutoff, L1 supplies another accepted invocation. By L3 its RPC
